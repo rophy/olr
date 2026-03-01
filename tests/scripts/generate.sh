@@ -18,6 +18,8 @@
 #                      (default: olr_test/olr_test@//localhost:1521/FREEPDB1)
 #   SCHEMA_OWNER     — Schema owner for LogMiner filter (default: OLR_TEST)
 #   PDB_NAME         — PDB service name (default: FREEPDB1)
+#   DOCKER_EXEC_USER — User for docker exec (default: unset; set to "oracle"
+#                      for Oracle official images that require OS authentication)
 
 set -euo pipefail
 
@@ -40,6 +42,11 @@ DB_CONN="${DB_CONN:-olr_test/olr_test@//localhost:1521/FREEPDB1}"
 SCHEMA_OWNER="${SCHEMA_OWNER:-OLR_TEST}"
 PDB_NAME="${PDB_NAME:-FREEPDB1}"
 COMPOSE="docker compose -f $ENV_DIR/docker-compose.yaml"
+# Docker exec prefix — some Oracle images need -u oracle for OS authentication
+DEXEC="docker exec"
+if [[ -n "${DOCKER_EXEC_USER:-}" ]]; then
+    DEXEC="docker exec -u $DOCKER_EXEC_USER"
+fi
 
 # Container path prefix — tests/ is mounted at this path in the olr container
 CONTAINER_TESTS=/opt/OpenLogReplicator-local/tests
@@ -62,13 +69,13 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # Helper: run sqlplus as sysdba inside the Oracle container
 run_sysdba() {
     local sql_file="$1"
-    docker exec "$ORACLE_CONTAINER" sqlplus -S / as sysdba @"$sql_file"
+    $DEXEC "$ORACLE_CONTAINER" sqlplus -S / as sysdba @"$sql_file"
 }
 
 # Helper: run sqlplus as test user inside the Oracle container
 run_user() {
     local sql_file="$1"
-    docker exec "$ORACLE_CONTAINER" sqlplus -S "$DB_CONN" @"$sql_file"
+    $DEXEC "$ORACLE_CONTAINER" sqlplus -S "$DB_CONN" @"$sql_file"
 }
 
 # Helper: copy file into Oracle container
@@ -89,6 +96,33 @@ fi
 
 # Check for @MID_SWITCH markers
 MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' "$SCENARIO_SQL" 2>/dev/null || true)
+
+# Check scenario tags vs environment tag filters
+SCENARIO_TAGS=$(grep '^-- @TAG ' "$SCENARIO_SQL" 2>/dev/null | sed 's/^-- @TAG //' || true)
+if [[ -n "$SCENARIO_TAGS" ]]; then
+    if [[ -z "${INCLUDE_TAGS:-}" ]]; then
+        echo "SKIP: $SCENARIO has tags ($SCENARIO_TAGS) but INCLUDE_TAGS not set"
+        exit 0
+    fi
+    TAG_MATCH=0
+    for tag in $SCENARIO_TAGS; do
+        for inc in ${INCLUDE_TAGS:-}; do
+            [[ "$tag" == "$inc" ]] && TAG_MATCH=1
+        done
+    done
+    if [[ $TAG_MATCH -eq 0 ]]; then
+        echo "SKIP: $SCENARIO tags ($SCENARIO_TAGS) not in INCLUDE_TAGS ($INCLUDE_TAGS)"
+        exit 0
+    fi
+fi
+for tag in ${SCENARIO_TAGS:-}; do
+    for exc in ${EXCLUDE_TAGS:-}; do
+        if [[ "$tag" == "$exc" ]]; then
+            echo "SKIP: $SCENARIO tag '$tag' is in EXCLUDE_TAGS"
+            exit 0
+        fi
+    done
+done
 
 # Generated fixture name encodes scenario + environment
 FIXTURE_NAME="${SCENARIO}-${ORACLE_TARGET}"
