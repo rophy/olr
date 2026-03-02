@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
-# generate.sh — Orchestrate fixture generation for OLR regression tests.
+# generate-rac.sh — Generate RAC multi-thread test fixtures for OLR.
 #
-# Usage: ./generate.sh <scenario-name>
-# Example: ./generate.sh basic-crud
+# Usage: ./generate-rac.sh <scenario-name>
+# Example: ./generate-rac.sh rac-interleaved
 #
-# This script is designed for the Oracle RAC VM setup where Oracle runs
-# inside podman containers (racnodep1, racnodep2). All sqlplus commands
-# are executed via: podman exec <container> su - oracle -c '...'
+# This script handles .rac.sql files with block-based SQL:
+#   -- @SETUP  — Table creation, supplemental logging, SCN capture (node 1)
+#   -- @NODE1  — DML executed on node 1
+#   -- @NODE2  — DML executed on node 2
+#
+# Multiple @NODE1/@NODE2 blocks are supported and executed in order.
+#
+# Unlike generate.sh, this captures archives from ALL threads (not just one)
+# and uses ALTER SYSTEM SWITCH ALL LOGFILE for RAC.
 #
 # Environment variables:
 #   VM_HOST       — Oracle VM IP (default: 192.168.122.248)
 #   VM_KEY        — SSH key path (default: oracle-rac/assets/vm-key)
 #   VM_USER       — SSH user (default: root)
 #   OLR_IMAGE     — Docker image for OLR (default: rophy/openlogreplicator:1.8.7)
-#   RAC_NODE      — Container name for sqlplus (default: racnodep1)
-#   ORACLE_SID    — Oracle SID inside container (default: ORCLCDB1)
-#   DB_CONN       — sqlplus connect string for test user (default: olr_test/olr_test@//racnodep1:1521/ORCLPDB)
+#   RAC_NODE1     — Container name for node 1 (default: racnodep1)
+#   RAC_NODE2     — Container name for node 2 (default: racnodep2)
+#   ORACLE_SID1   — Oracle SID for node 1 (default: ORCLCDB1)
+#   ORACLE_SID2   — Oracle SID for node 2 (default: ORCLCDB2)
+#   DB_CONN1      — PDB connect string via node 1 (default: olr_test/olr_test@//racnodep1:1521/ORCLPDB)
+#   DB_CONN2      — PDB connect string via node 2 (default: olr_test/olr_test@//racnodep2:1521/ORCLPDB)
 #   SCHEMA_OWNER  — Schema owner for LogMiner filter (default: OLR_TEST)
-#   DML_THREAD    — Thread number that generated the DML (default: 1)
 
 set -euo pipefail
 
@@ -30,50 +38,123 @@ VM_HOST="${VM_HOST:-192.168.122.248}"
 VM_KEY="${VM_KEY:-$PROJECT_ROOT/oracle-rac/assets/vm-key}"
 VM_USER="${VM_USER:-root}"
 OLR_IMAGE="${OLR_IMAGE:-rophy/openlogreplicator:latest}"
-RAC_NODE="${RAC_NODE:-racnodep1}"
-ORACLE_SID="${ORACLE_SID:-ORCLCDB1}"
-DB_CONN="${DB_CONN:-olr_test/olr_test@//racnodep1:1521/ORCLPDB}"
+RAC_NODE1="${RAC_NODE1:-racnodep1}"
+RAC_NODE2="${RAC_NODE2:-racnodep2}"
+ORACLE_SID1="${ORACLE_SID1:-ORCLCDB1}"
+ORACLE_SID2="${ORACLE_SID2:-ORCLCDB2}"
+DB_CONN1="${DB_CONN1:-olr_test/olr_test@//racnodep1:1521/ORCLPDB}"
+DB_CONN2="${DB_CONN2:-olr_test/olr_test@//racnodep2:1521/ORCLPDB}"
 SCHEMA_OWNER="${SCHEMA_OWNER:-OLR_TEST}"
-DML_THREAD="${DML_THREAD:-1}"
 
 SSH_OPTS="-i $VM_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 SCENARIO="${1:?Usage: $0 <scenario-name>}"
-SCENARIO_SQL="$SCRIPT_DIR/scenarios/${SCENARIO}.sql"
+SCENARIO_SQL="$SCRIPT_DIR/../0-inputs/${SCENARIO}.rac.sql"
 
 if [[ ! -f "$SCENARIO_SQL" ]]; then
     echo "ERROR: Scenario file not found: $SCENARIO_SQL" >&2
-    echo "Available scenarios:" >&2
-    ls "$SCRIPT_DIR/scenarios/"*.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.sql$//' >&2
+    echo "Available RAC scenarios:" >&2
+    ls "$SCRIPT_DIR/../0-inputs/"*.rac.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.rac\.sql$//' >&2
     exit 1
 fi
 
 # Working directory for this run
-WORK_DIR=$(mktemp -d "/tmp/olr_fixture_${SCENARIO}_XXXXXX")
+WORK_DIR=$(mktemp -d "/tmp/olr_rac_fixture_${SCENARIO}_XXXXXX")
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Helper: run sqlplus inside the RAC container as oracle user
-vm_sqlplus() {
-    local conn="$1"
-    local sql_file="$2"
+# ---- Helpers ----
+
+# Run sqlplus on a specific node
+vm_sqlplus_node() {
+    local node="$1"
+    local sid="$2"
+    local conn="$3"
+    local sql_file="$4"
     ssh $SSH_OPTS "${VM_USER}@${VM_HOST}" \
-        "podman exec $RAC_NODE su - oracle -c 'export ORACLE_SID=$ORACLE_SID; sqlplus -S \"$conn\" @$sql_file'"
+        "podman exec $node su - oracle -c 'export ORACLE_SID=$sid; sqlplus -S \"$conn\" @$sql_file'"
 }
 
-# Helper: copy a local file into the RAC container via the VM
-vm_copy_in() {
+vm_sqlplus_node1() {
+    vm_sqlplus_node "$RAC_NODE1" "$ORACLE_SID1" "$1" "$2"
+}
+
+vm_sqlplus_node2() {
+    vm_sqlplus_node "$RAC_NODE2" "$ORACLE_SID2" "$1" "$2"
+}
+
+# Copy a local file into a specific RAC container
+vm_copy_in_node() {
     local local_path="$1"
     local container_path="$2"
+    local node="$3"
     scp $SSH_OPTS "$local_path" "${VM_USER}@${VM_HOST}:/tmp/_fixture_tmp"
-    ssh $SSH_OPTS "${VM_USER}@${VM_HOST}" "podman cp /tmp/_fixture_tmp ${RAC_NODE}:${container_path}"
+    ssh $SSH_OPTS "${VM_USER}@${VM_HOST}" "podman cp /tmp/_fixture_tmp ${node}:${container_path}"
 }
 
-# Helper: copy a file from the RAC container to local
-vm_copy_out() {
+# Copy a file from a RAC container to local
+vm_copy_out_node() {
     local container_path="$1"
     local local_path="$2"
-    ssh $SSH_OPTS "${VM_USER}@${VM_HOST}" "podman cp ${RAC_NODE}:${container_path} /tmp/_fixture_tmp"
+    local node="$3"
+    ssh $SSH_OPTS "${VM_USER}@${VM_HOST}" "podman cp ${node}:${container_path} /tmp/_fixture_tmp"
     scp $SSH_OPTS "${VM_USER}@${VM_HOST}:/tmp/_fixture_tmp" "$local_path"
+}
+
+# Parse .rac.sql into SETUP + ordered NODE blocks
+# Outputs numbered files: $WORK_DIR/block_NNN_{setup,node1,node2}.sql
+parse_rac_blocks() {
+    local sql_file="$1"
+    local block_idx=0
+    local current_type=""
+    local current_file=""
+
+    while IFS= read -r line; do
+        # Check for block markers
+        if [[ "$line" =~ ^--[[:space:]]*@SETUP ]]; then
+            current_type="setup"
+            current_file="$WORK_DIR/block_$(printf '%03d' $block_idx)_setup.sql"
+            block_idx=$((block_idx + 1))
+            # Write SQL header for PDB session
+            cat > "$current_file" <<'HEADER'
+SET SERVEROUTPUT ON
+SET FEEDBACK OFF
+SET ECHO OFF
+HEADER
+            continue
+        elif [[ "$line" =~ ^--[[:space:]]*@NODE1 ]]; then
+            current_type="node1"
+            current_file="$WORK_DIR/block_$(printf '%03d' $block_idx)_node1.sql"
+            block_idx=$((block_idx + 1))
+            cat > "$current_file" <<'HEADER'
+SET SERVEROUTPUT ON
+SET FEEDBACK OFF
+SET ECHO OFF
+HEADER
+            continue
+        elif [[ "$line" =~ ^--[[:space:]]*@NODE2 ]]; then
+            current_type="node2"
+            current_file="$WORK_DIR/block_$(printf '%03d' $block_idx)_node2.sql"
+            block_idx=$((block_idx + 1))
+            cat > "$current_file" <<'HEADER'
+SET SERVEROUTPUT ON
+SET FEEDBACK OFF
+SET ECHO OFF
+HEADER
+            continue
+        fi
+
+        # Append line to current block file
+        if [[ -n "$current_file" ]]; then
+            echo "$line" >> "$current_file"
+        fi
+    done < "$sql_file"
+
+    # Append EXIT to each block
+    for f in "$WORK_DIR"/block_*_*.sql; do
+        [[ -f "$f" ]] || continue
+        echo "" >> "$f"
+        echo "EXIT" >> "$f"
+    done
 }
 
 # Check for DDL marker — switches LogMiner to DICT_FROM_REDO_LOGS mode
@@ -82,9 +163,10 @@ if grep -q '^-- @DDL' "$SCENARIO_SQL" 2>/dev/null; then
     DDL_MODE=1
 fi
 
-echo "=== Fixture generation: $SCENARIO ==="
+echo "=== RAC Fixture generation: $SCENARIO ==="
 echo "  VM: $VM_HOST"
-echo "  Container: $RAC_NODE"
+echo "  Node 1: $RAC_NODE1 (SID: $ORACLE_SID1)"
+echo "  Node 2: $RAC_NODE2 (SID: $ORACLE_SID2)"
 echo "  Work dir: $WORK_DIR"
 if [[ "$DDL_MODE" -eq 1 ]]; then
     echo "  Mode: DDL (DICT_FROM_REDO_LOGS)"
@@ -101,13 +183,13 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('Dictionary built OK');
 END;
 /
-ALTER SYSTEM SWITCH LOGFILE;
+ALTER SYSTEM SWITCH ALL LOGFILE;
 BEGIN DBMS_SESSION.SLEEP(2); END;
 /
 EXIT
 DICTSQL
-    vm_copy_in "$WORK_DIR/build_dict.sql" "/tmp/build_dict.sql"
-    DICT_OUTPUT=$(vm_sqlplus "/ as sysdba" "/tmp/build_dict.sql")
+    vm_copy_in_node "$WORK_DIR/build_dict.sql" "/tmp/build_dict.sql" "$RAC_NODE1"
+    DICT_OUTPUT=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/build_dict.sql")
     echo "  $DICT_OUTPUT"
 
     # Record the SCN where dictionary starts (needed to find archive logs)
@@ -119,63 +201,70 @@ WHERE dictionary_begin = 'YES' AND deleted = 'NO' AND name IS NOT NULL
                         WHERE dictionary_begin = 'YES' AND deleted = 'NO');
 EXIT
 DICTSCN
-    vm_copy_in "$WORK_DIR/dict_scn.sql" "/tmp/dict_scn.sql"
-    DICT_START_SCN=$(vm_sqlplus "/ as sysdba" "/tmp/dict_scn.sql" | tr -d '[:space:]')
+    vm_copy_in_node "$WORK_DIR/dict_scn.sql" "/tmp/dict_scn.sql" "$RAC_NODE1"
+    DICT_START_SCN=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/dict_scn.sql" | tr -d '[:space:]')
     echo "  Dictionary start SCN: $DICT_START_SCN"
     echo ""
 fi
 
-# ---- Stage 1: Run SQL scenario ----
-echo "--- Stage 1: Running SQL scenario ---"
-vm_copy_in "$SCENARIO_SQL" "/tmp/scenario.sql"
+# ---- Stage 1: Parse and run SQL blocks ----
+echo "--- Stage 1: Running SQL scenario blocks ---"
 
-# Check if scenario needs mid-execution log switches (-- @MID_SWITCH marker).
-# If so, run DML in background — the SQL uses DBMS_SESSION.SLEEP() to pause
-# while we trigger log switches from CDB root as sysdba.
-MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' "$SCENARIO_SQL" 2>/dev/null || true)
-if [[ "$MID_SWITCH_COUNT" -gt 0 ]]; then
-    echo "  Detected $MID_SWITCH_COUNT @MID_SWITCH marker(s) — running DML in background"
-    # Run DML in background; it will SLEEP at each @MID_SWITCH point
-    vm_sqlplus "$DB_CONN" "/tmp/scenario.sql" > "$WORK_DIR/dml_output.txt" 2>&1 &
-    DML_PID=$!
-    # Wait for DML to reach the first SLEEP point, then do log switches
-    for i in $(seq 1 "$MID_SWITCH_COUNT"); do
-        sleep 8  # wait for DML to reach SLEEP(15) point
-        echo "  Triggering mid-execution log switch #$i"
-        cat > "$WORK_DIR/mid_switch.sql" <<'MIDSQL'
-SET FEEDBACK OFF
-ALTER SYSTEM SWITCH LOGFILE;
-EXIT
-MIDSQL
-        vm_copy_in "$WORK_DIR/mid_switch.sql" "/tmp/mid_switch.sql"
-        vm_sqlplus "/ as sysdba" "/tmp/mid_switch.sql"
-    done
-    wait "$DML_PID" || true
-    SCENARIO_OUTPUT=$(cat "$WORK_DIR/dml_output.txt")
-else
-    SCENARIO_OUTPUT=$(vm_sqlplus "$DB_CONN" "/tmp/scenario.sql")
-fi
-echo "$SCENARIO_OUTPUT"
+parse_rac_blocks "$SCENARIO_SQL"
 
-# Parse SCN range from output
-START_SCN=$(echo "$SCENARIO_OUTPUT" | grep 'FIXTURE_SCN_START:' | head -1 | sed 's/.*FIXTURE_SCN_START:\s*//' | tr -d '[:space:]')
-if [[ -z "$START_SCN" ]]; then
+# Execute blocks in order
+for block_file in "$WORK_DIR"/block_*_*.sql; do
+    [[ -f "$block_file" ]] || continue
+    block_name=$(basename "$block_file" .sql)
+    block_type="${block_name##*_}"  # setup, node1, or node2
+
+    case "$block_type" in
+        setup)
+            echo "  Running SETUP block on node 1..."
+            vm_copy_in_node "$block_file" "/tmp/scenario_block.sql" "$RAC_NODE1"
+            BLOCK_OUTPUT=$(vm_sqlplus_node1 "$DB_CONN1" "/tmp/scenario_block.sql")
+            echo "$BLOCK_OUTPUT"
+            # Capture start SCN from SETUP output
+            SETUP_SCN=$(echo "$BLOCK_OUTPUT" | grep 'FIXTURE_SCN_START:' | head -1 | sed 's/.*FIXTURE_SCN_START:\s*//' | tr -d '[:space:]')
+            if [[ -n "$SETUP_SCN" ]]; then
+                START_SCN="$SETUP_SCN"
+            fi
+            ;;
+        node1)
+            echo "  Running NODE1 block ($block_name)..."
+            vm_copy_in_node "$block_file" "/tmp/scenario_block.sql" "$RAC_NODE1"
+            BLOCK_OUTPUT=$(vm_sqlplus_node1 "$DB_CONN1" "/tmp/scenario_block.sql")
+            echo "$BLOCK_OUTPUT"
+            ;;
+        node2)
+            echo "  Running NODE2 block ($block_name)..."
+            vm_copy_in_node "$block_file" "/tmp/scenario_block.sql" "$RAC_NODE2"
+            BLOCK_OUTPUT=$(vm_sqlplus_node2 "$DB_CONN2" "/tmp/scenario_block.sql")
+            echo "$BLOCK_OUTPUT"
+            ;;
+    esac
+done
+
+if [[ -z "${START_SCN:-}" ]]; then
     echo "ERROR: Could not find FIXTURE_SCN_START in scenario output" >&2
     exit 1
 fi
 
-# Force log switches from CDB root (required — can't run from PDB)
-echo "  Forcing log switches..."
+# Force log switches on ALL instances (RAC-specific: SWITCH ALL LOGFILE)
+echo "  Forcing log switches on all instances..."
 cat > "$WORK_DIR/log_switch.sql" <<'LOGSQL'
 SET FEEDBACK OFF
-ALTER SYSTEM SWITCH LOGFILE;
-ALTER SYSTEM SWITCH LOGFILE;
-BEGIN DBMS_SESSION.SLEEP(3); END;
+ALTER SYSTEM SWITCH ALL LOGFILE;
+ALTER SYSTEM SWITCH ALL LOGFILE;
+BEGIN DBMS_SESSION.SLEEP(5); END;
+/
+ALTER SYSTEM SWITCH ALL LOGFILE;
+BEGIN DBMS_SESSION.SLEEP(5); END;
 /
 EXIT
 LOGSQL
-vm_copy_in "$WORK_DIR/log_switch.sql" "/tmp/log_switch.sql"
-vm_sqlplus "/ as sysdba" "/tmp/log_switch.sql"
+vm_copy_in_node "$WORK_DIR/log_switch.sql" "/tmp/log_switch.sql" "$RAC_NODE1"
+vm_sqlplus_node1 "/ as sysdba" "/tmp/log_switch.sql"
 
 # Get end SCN after log switches
 cat > "$WORK_DIR/get_scn.sql" <<'SCNSQL'
@@ -183,33 +272,45 @@ SET HEADING OFF FEEDBACK OFF PAGESIZE 0
 SELECT current_scn FROM v$database;
 EXIT
 SCNSQL
-vm_copy_in "$WORK_DIR/get_scn.sql" "/tmp/get_scn.sql"
-END_SCN=$(vm_sqlplus "/ as sysdba" "/tmp/get_scn.sql" | tr -d '[:space:]')
+vm_copy_in_node "$WORK_DIR/get_scn.sql" "/tmp/get_scn.sql" "$RAC_NODE1"
+END_SCN=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/get_scn.sql" | tr -d '[:space:]')
 
 echo "  SCN range: $START_SCN - $END_SCN"
 
-# ---- Stage 2: Capture archived redo logs ----
+# ---- Stage 2: Capture archived redo logs (ALL threads) ----
 echo ""
-echo "--- Stage 2: Capturing archived redo logs ---"
+echo "--- Stage 2: Capturing archived redo logs (all threads) ---"
 REDO_DIR="$DATA_DIR/redo/$SCENARIO"
 rm -rf "$REDO_DIR"
 mkdir -p "$REDO_DIR"
 
-# Query V$ARCHIVED_LOG for files covering the SCN range (DML thread only)
+# Query GV$ARCHIVED_LOG for all instances — retry until archives from multiple threads appear
 cat > "$WORK_DIR/find_archives.sql" <<SQL
 SET HEADING OFF FEEDBACK OFF PAGESIZE 0 LINESIZE 1000
-SELECT name FROM v\$archived_log
+SELECT name FROM gv\$archived_log
 WHERE first_change# <= $END_SCN
   AND next_change# >= $START_SCN
-  AND thread# = $DML_THREAD
   AND deleted = 'NO'
   AND name IS NOT NULL
+GROUP BY name, thread#, sequence#
 ORDER BY thread#, sequence#;
 EXIT
 SQL
 
-vm_copy_in "$WORK_DIR/find_archives.sql" "/tmp/find_archives.sql"
-ARCHIVE_LIST=$(vm_sqlplus "/ as sysdba" "/tmp/find_archives.sql")
+vm_copy_in_node "$WORK_DIR/find_archives.sql" "/tmp/find_archives.sql" "$RAC_NODE1"
+
+# Retry loop: RAC archiver may take a few seconds to register archives from all threads
+ARCHIVE_LIST=""
+for attempt in 1 2 3 4 5; do
+    ARCHIVE_LIST=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/find_archives.sql")
+    # Extract thread number from archive filename format: /path/{thread}_{seq}_{resetlogs}.arc
+    THREAD_COUNT=$(echo "$ARCHIVE_LIST" | grep -v '^[[:space:]]*$' | sed 's|.*/||' | cut -d_ -f1 | sort -u | wc -l)
+    if [[ "$THREAD_COUNT" -ge 2 ]] || [[ $attempt -eq 5 ]]; then
+        break
+    fi
+    echo "  Waiting for archives from all threads (attempt $attempt, found $THREAD_COUNT thread(s))..."
+    sleep 5
+done
 
 if [[ -z "$ARCHIVE_LIST" ]]; then
     echo "ERROR: No archive logs found for SCN range" >&2
@@ -249,10 +350,10 @@ sed -i '/^SET LINESIZE/i ALTER SESSION SET CONTAINER=ORCLPDB;\nSET FEEDBACK OFF\
 # Add EXIT at end
 echo "EXIT;" >> "$WORK_DIR/gencfg.sql"
 
-vm_copy_in "$WORK_DIR/gencfg.sql" "/tmp/gencfg.sql"
+vm_copy_in_node "$WORK_DIR/gencfg.sql" "/tmp/gencfg.sql" "$RAC_NODE1"
 
 echo "  Running gencfg.sql..."
-GENCFG_OUTPUT=$(vm_sqlplus "/ as sysdba" "/tmp/gencfg.sql")
+GENCFG_OUTPUT=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/gencfg.sql")
 
 # Extract JSON content (starts with {"database":)
 SCHEMA_FILE="$SCHEMA_DIR/TEST-chkpt-${START_SCN}.json"
@@ -355,13 +456,13 @@ END;
 EXIT
 SQL
 
-vm_copy_in "$WORK_DIR/logminer_run.sql" "/tmp/logminer_run.sql"
+vm_copy_in_node "$WORK_DIR/logminer_run.sql" "/tmp/logminer_run.sql" "$RAC_NODE1"
 
 echo "  Running LogMiner..."
-LM_OUTPUT=$(vm_sqlplus "/ as sysdba" "/tmp/logminer_run.sql")
+LM_OUTPUT=$(vm_sqlplus_node1 "/ as sysdba" "/tmp/logminer_run.sql")
 echo "$LM_OUTPUT" | head -20 || true
 
-vm_copy_out "/tmp/logminer_out.lst" "$WORK_DIR/logminer_raw.lst"
+vm_copy_out_node "/tmp/logminer_out.lst" "$WORK_DIR/logminer_raw.lst" "$RAC_NODE1"
 
 python3 "$SCRIPT_DIR/logminer2json.py" "$WORK_DIR/logminer_raw.lst" "$WORK_DIR/logminer.json"
 LM_COUNT=$(wc -l < "$WORK_DIR/logminer.json")
@@ -486,11 +587,11 @@ if [[ $COMPARE_RESULT -eq 0 ]]; then
     cp "$WORK_DIR/logminer.json" "$EXPECTED_DIR/logminer-reference.json"
     echo "  LogMiner reference saved: $EXPECTED_DIR/logminer-reference.json"
     echo ""
-    echo "=== PASS: Fixture '$SCENARIO' generated successfully ==="
+    echo "=== PASS: RAC fixture '$SCENARIO' generated successfully ==="
 else
     echo "--- Stage 7: SKIPPED (comparison failed) ---"
     echo ""
-    echo "=== FAIL: Fixture '$SCENARIO' comparison failed ==="
+    echo "=== FAIL: RAC fixture '$SCENARIO' comparison failed ==="
     echo "  LogMiner JSON: $WORK_DIR/logminer.json"
     echo "  OLR output:    $OLR_OUTPUT"
     echo "  OLR log:       $WORK_DIR/olr_stdout.log"
