@@ -7,12 +7,15 @@
 # Runs SQL against an Oracle instance, captures redo logs, generates schema,
 # runs LogMiner + OLR, and compares output.
 #
+# Works with both single-node (.sql) and RAC (.rac.sql) scenarios.
+# The driver determines how Oracle is accessed and how OLR runs.
+#
 # Prerequisites:
 #   - Oracle accessible via the selected driver (default: docker)
 #   - For docker driver: containers running via make -C tests/1-environments/$ORACLE_TARGET up
 #
 # Environment variables:
-#   ORACLE_DRIVER    — Driver to use: docker (default) or local
+#   ORACLE_DRIVER    — Driver to use: docker (default), local, or rac
 #                      See tests/scripts/drivers/ for driver-specific env vars
 #   ORACLE_TARGET    — Oracle environment name (default: free-23)
 #                      Used by docker driver to locate docker-compose.yaml
@@ -20,6 +23,7 @@
 #                      (default: olr_test/olr_test@//localhost:1521/FREEPDB1)
 #   SCHEMA_OWNER     — Schema owner for LogMiner filter (default: OLR_TEST)
 #   PDB_NAME         — PDB service name (default: FREEPDB1)
+#   OUTPUT_BASE      — Output directory (default: $TESTS_DIR/3-generated)
 
 set -euo pipefail
 
@@ -36,43 +40,33 @@ DB_CONN="${DB_CONN:-olr_test/olr_test@//localhost:1521/FREEPDB1}"
 SCHEMA_OWNER="${SCHEMA_OWNER:-OLR_TEST}"
 PDB_NAME="${PDB_NAME:-FREEPDB1}"
 
-# Container path prefix — tests/ is mounted at this path in the olr container
-# (used by docker driver's olr_path(); exported so driver can reference it)
-CONTAINER_TESTS=/opt/OpenLogReplicator-local/tests
+# Parse scenario name early (drivers may reference it during source)
+SCENARIO="${1:?Usage: $0 <scenario-name>}"
 
-# Source the driver (defines: exec_sysdba, exec_user, oracle_spool_path,
-#                             fetch_spool, olr_path, run_olr)
+# Source the driver (which sources base.sh, defines primitives + stage functions)
 ORACLE_DRIVER="${ORACLE_DRIVER:-docker}"
 DRIVER_FILE="$SCRIPT_DIR/drivers/${ORACLE_DRIVER}.sh"
 [[ -f "$DRIVER_FILE" ]] || { echo "ERROR: Unknown driver '$ORACLE_DRIVER' (no $DRIVER_FILE)" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$DRIVER_FILE"
 
-SCENARIO="${1:?Usage: $0 <scenario-name>}"
+# Try .sql first, then .rac.sql
 SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.sql"
+if [[ ! -f "$SCENARIO_SQL" ]]; then
+    SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.rac.sql"
+fi
 
 if [[ ! -f "$SCENARIO_SQL" ]]; then
-    echo "ERROR: Scenario file not found: $SCENARIO_SQL" >&2
+    echo "ERROR: Scenario file not found for: $SCENARIO" >&2
+    echo "Looked for:" >&2
+    echo "  $TESTS_DIR/0-inputs/${SCENARIO}.sql" >&2
+    echo "  $TESTS_DIR/0-inputs/${SCENARIO}.rac.sql" >&2
     echo "Available scenarios:" >&2
-    ls "$TESTS_DIR/0-inputs/"*.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.sql$//' >&2
+    ls "$TESTS_DIR/0-inputs/"*.sql "$TESTS_DIR/0-inputs/"*.rac.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.rac\.sql$//;s/\.sql$//' | sort -u >&2
     exit 1
 fi
 
-# Working directory for this run (under tests/.work/ so it's visible inside the olr container)
-mkdir -p "$TESTS_DIR/.work"
-WORK_DIR=$(mktemp -d "$TESTS_DIR/.work/${ORACLE_TARGET}_${SCENARIO}_XXXXXX")
-trap 'rm -rf "$WORK_DIR"' EXIT
-
-# Check for DDL marker — switches to DICT_FROM_REDO_LOGS mode
-DDL_MODE=0
-if grep -q '^-- @DDL' "$SCENARIO_SQL" 2>/dev/null; then
-    DDL_MODE=1
-fi
-
-# Check for @MID_SWITCH markers
-MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' "$SCENARIO_SQL" 2>/dev/null || true)
-
-# Check scenario tags vs environment tag filters
+# ---- Tag filtering ----
 SCENARIO_TAGS=$(grep '^-- @TAG ' "$SCENARIO_SQL" 2>/dev/null | sed 's/^-- @TAG //' || true)
 if [[ -n "$SCENARIO_TAGS" ]]; then
     if [[ -z "${INCLUDE_TAGS:-}" ]]; then
@@ -99,8 +93,23 @@ for tag in ${SCENARIO_TAGS:-}; do
     done
 done
 
-# Generated fixture name encodes scenario + environment
-FIXTURE_NAME="${SCENARIO}-${ORACLE_TARGET}"
+# ---- Setup ----
+FIXTURE_NAME="${SCENARIO}${FIXTURE_SUFFIX}"
+OUTPUT_BASE="${OUTPUT_BASE:-$TESTS_DIR/3-generated}"
+
+# Working directory (under tests/.work/ so it's visible inside OLR containers)
+mkdir -p "$TESTS_DIR/.work"
+WORK_DIR=$(mktemp -d "$TESTS_DIR/.work/${ORACLE_TARGET}_${SCENARIO}_XXXXXX")
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Check for DDL marker
+DDL_MODE=0
+if grep -q '^-- @DDL' "$SCENARIO_SQL" 2>/dev/null; then
+    DDL_MODE=1
+fi
+
+# Check for @MID_SWITCH markers
+MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' "$SCENARIO_SQL" 2>/dev/null || true)
 
 echo "=== Fixture generation: $SCENARIO (target: $ORACLE_TARGET, driver: $ORACLE_DRIVER) ==="
 echo "  Fixture name: $FIXTURE_NAME"
@@ -110,393 +119,27 @@ if [[ "$DDL_MODE" -eq 1 ]]; then
 fi
 echo ""
 
-# ---- Stage 0 (DDL only): Build LogMiner dictionary into redo logs ----
+# ---- Run stages ----
+
+# Stage 0 (DDL only): Build LogMiner dictionary into redo logs
 if [[ "$DDL_MODE" -eq 1 ]]; then
-    echo "--- Stage 0: Building LogMiner dictionary into redo logs ---"
-    cat > "$WORK_DIR/build_dict.sql" <<'DICTSQL'
-SET SERVEROUTPUT ON FEEDBACK OFF
-BEGIN
-    DBMS_LOGMNR_D.BUILD(OPTIONS => DBMS_LOGMNR_D.STORE_IN_REDO_LOGS);
-    DBMS_OUTPUT.PUT_LINE('Dictionary built OK');
-END;
-/
-ALTER SYSTEM SWITCH LOGFILE;
-BEGIN DBMS_SESSION.SLEEP(2); END;
-/
-EXIT
-DICTSQL
-    DICT_OUTPUT=$(exec_sysdba "$WORK_DIR/build_dict.sql")
-    echo "  $DICT_OUTPUT"
-
-    # Record the SCN where dictionary starts
-    cat > "$WORK_DIR/dict_scn.sql" <<'DICTSCN'
-SET HEADING OFF FEEDBACK OFF PAGESIZE 0
-SELECT MIN(first_change#) FROM v$archived_log
-WHERE dictionary_begin = 'YES' AND deleted = 'NO' AND name IS NOT NULL
-  AND first_change# = (SELECT MAX(first_change#) FROM v$archived_log
-                        WHERE dictionary_begin = 'YES' AND deleted = 'NO');
-EXIT
-DICTSCN
-    DICT_START_SCN=$(exec_sysdba "$WORK_DIR/dict_scn.sql" | tr -d '[:space:]')
-    echo "  Dictionary start SCN: $DICT_START_SCN"
-    echo ""
+    stage_build_dictionary
 fi
 
-# ---- Stage 1: Run SQL scenario ----
-echo "--- Stage 1: Running SQL scenario ---"
+# Stage 1: Run SQL scenario
+stage_run_scenario
 
-if [[ "$MID_SWITCH_COUNT" -gt 0 ]]; then
-    echo "  Detected $MID_SWITCH_COUNT @MID_SWITCH marker(s) — running DML in background"
-    exec_user "$SCENARIO_SQL" > "$WORK_DIR/dml_output.txt" 2>&1 &
-    DML_PID=$!
-    for i in $(seq 1 "$MID_SWITCH_COUNT"); do
-        sleep 8
-        echo "  Triggering mid-execution log switch #$i"
-        cat > "$WORK_DIR/mid_switch.sql" <<'MIDSQL'
-SET FEEDBACK OFF
-ALTER SYSTEM SWITCH LOGFILE;
-EXIT
-MIDSQL
-        exec_sysdba "$WORK_DIR/mid_switch.sql" > /dev/null
-    done
-    wait "$DML_PID" || true
-    SCENARIO_OUTPUT=$(cat "$WORK_DIR/dml_output.txt")
-else
-    SCENARIO_OUTPUT=$(exec_user "$SCENARIO_SQL")
-fi
-echo "$SCENARIO_OUTPUT"
+# Stage 2: Capture archived redo logs
+stage_capture_archives
 
-# Parse SCN range from output
-START_SCN=$(echo "$SCENARIO_OUTPUT" | grep 'FIXTURE_SCN_START:' | head -1 | sed 's/.*FIXTURE_SCN_START:\s*//' | tr -d '[:space:]')
-if [[ -z "$START_SCN" ]]; then
-    echo "ERROR: Could not find FIXTURE_SCN_START in scenario output" >&2
-    exit 1
-fi
+# Stage 3: Generate schema file
+stage_generate_schema
 
-# Force log switches
-echo "  Forcing log switches..."
-cat > "$WORK_DIR/log_switch.sql" <<'LOGSQL'
-SET FEEDBACK OFF
-ALTER SYSTEM SWITCH LOGFILE;
-ALTER SYSTEM SWITCH LOGFILE;
-BEGIN DBMS_SESSION.SLEEP(3); END;
-/
-EXIT
-LOGSQL
-exec_sysdba "$WORK_DIR/log_switch.sql" > /dev/null
+# Stage 4: Run LogMiner extraction
+stage_run_logminer
 
-# Get end SCN
-cat > "$WORK_DIR/get_scn.sql" <<'SCNSQL'
-SET HEADING OFF FEEDBACK OFF PAGESIZE 0
-SELECT current_scn FROM v$database;
-EXIT
-SCNSQL
-END_SCN=$(exec_sysdba "$WORK_DIR/get_scn.sql" | tr -d '[:space:]')
-
-echo "  SCN range: $START_SCN - $END_SCN"
-
-# ---- Stage 2: Capture archived redo logs ----
-echo ""
-echo "--- Stage 2: Capturing archived redo logs ---"
-REDO_DIR="$TESTS_DIR/3-generated/redo/$FIXTURE_NAME"
-rm -rf "$REDO_DIR"
-mkdir -p "$REDO_DIR"
-
-# Query log_archive_format from Oracle
-cat > "$WORK_DIR/get_archfmt.sql" <<'FMTSQL'
-SET HEADING OFF FEEDBACK OFF PAGESIZE 0 LINESIZE 200
-SELECT value FROM v$parameter WHERE name='log_archive_format';
-EXIT
-FMTSQL
-LOG_ARCHIVE_FORMAT=$(exec_sysdba "$WORK_DIR/get_archfmt.sql" | tr -d '[:space:]')
-echo "  Oracle log_archive_format: $LOG_ARCHIVE_FORMAT"
-
-# Query archive files with thread#/sequence# to detect filename prefixes
-cat > "$WORK_DIR/find_archives.sql" <<SQL
-SET HEADING OFF FEEDBACK OFF PAGESIZE 0 LINESIZE 1000
-SELECT name || '|' || thread# || '|' || sequence# || '|' || resetlogs_id
-FROM v\$archived_log
-WHERE first_change# <= $END_SCN
-  AND next_change# >= $START_SCN
-  AND deleted = 'NO'
-  AND name IS NOT NULL
-ORDER BY thread#, sequence#;
-EXIT
-SQL
-
-ARCHIVE_LIST=$(exec_sysdba "$WORK_DIR/find_archives.sql")
-
-if [[ -z "$ARCHIVE_LIST" ]]; then
-    echo "ERROR: No archive logs found for SCN range" >&2
-    exit 1
-fi
-
-# Detect actual filename prefix by comparing first archive with expected format
-# Oracle may add prefixes (e.g., "arch") not reflected in log_archive_format
-FIRST_LINE=$(echo "$ARCHIVE_LIST" | head -1 | tr -d '[:space:]')
-FIRST_PATH=$(echo "$FIRST_LINE" | cut -d'|' -f1)
-FIRST_THREAD=$(echo "$FIRST_LINE" | cut -d'|' -f2)
-FIRST_SEQ=$(echo "$FIRST_LINE" | cut -d'|' -f3)
-FIRST_RESETLOGS=$(echo "$FIRST_LINE" | cut -d'|' -f4)
-FIRST_FNAME=$(basename "$FIRST_PATH")
-
-# Construct what the format would produce for this file
-EXPECTED_FNAME=$(echo "$LOG_ARCHIVE_FORMAT" | sed "s/%t/$FIRST_THREAD/;s/%s/$FIRST_SEQ/;s/%r/$FIRST_RESETLOGS/;s/%S/$(printf '%09d' "$FIRST_SEQ")/")
-# Derive prefix: strip expected from actual
-ARCHIVE_PREFIX="${FIRST_FNAME%%$EXPECTED_FNAME}"
-if [[ -n "$ARCHIVE_PREFIX" ]]; then
-    echo "  Detected archive filename prefix: '$ARCHIVE_PREFIX'"
-    LOG_ARCHIVE_FORMAT="${ARCHIVE_PREFIX}${LOG_ARCHIVE_FORMAT}"
-fi
-echo "  Effective log-archive-format: $LOG_ARCHIVE_FORMAT"
-
-echo "$ARCHIVE_LIST" | while read -r line; do
-    line=$(echo "$line" | tr -d '[:space:]')
-    [[ -z "$line" ]] && continue
-    arclog=$(echo "$line" | cut -d'|' -f1)
-    fname=$(basename "$arclog")
-    echo "  Copying: $arclog"
-    fetch_archive "$arclog" "$REDO_DIR/$fname"
-done
-chmod -R a+r "$REDO_DIR"  # Oracle archives are 640; make readable for OLR container
-echo "  Redo logs saved to: $REDO_DIR"
-
-# ---- Stage 3: Generate schema file ----
-echo ""
-echo "--- Stage 3: Schema generation ---"
-SCHEMA_DIR="$TESTS_DIR/3-generated/schema/$FIXTURE_NAME"
-rm -rf "$SCHEMA_DIR"
-mkdir -p "$SCHEMA_DIR"
-
-# Patch gencfg.sql with test parameters
-cp "$PROJECT_ROOT/scripts/gencfg.sql" "$WORK_DIR/gencfg.sql"
-
-# Patch: name, users, SCN
-sed -i "s/v_NAME := 'DB'/v_NAME := 'TEST'/" "$WORK_DIR/gencfg.sql"
-sed -i "s/v_USERNAME_LIST := VARCHAR2TABLE('USR1', 'USR2')/v_USERNAME_LIST := VARCHAR2TABLE('$SCHEMA_OWNER')/" "$WORK_DIR/gencfg.sql"
-sed -i "s/SELECT CURRENT_SCN INTO v_SCN FROM SYS.V_\\\$DATABASE/-- SELECT CURRENT_SCN INTO v_SCN FROM SYS.V_\$DATABASE/" "$WORK_DIR/gencfg.sql"
-sed -i "s/-- v_SCN := 12345678/v_SCN := $START_SCN/" "$WORK_DIR/gencfg.sql"
-
-# Add PDB session switch and settings before the DECLARE block
-sed -i '/^SET LINESIZE/i ALTER SESSION SET CONTAINER='"$PDB_NAME"';\nSET FEEDBACK OFF\nSET ECHO OFF' "$WORK_DIR/gencfg.sql"
-
-# Add EXIT at end
-echo "EXIT;" >> "$WORK_DIR/gencfg.sql"
-
-echo "  Running gencfg.sql..."
-GENCFG_OUTPUT=$(exec_sysdba "$WORK_DIR/gencfg.sql")
-
-# Extract JSON content (starts with {"database":)
-SCHEMA_FILE="$SCHEMA_DIR/TEST-chkpt-${START_SCN}.json"
-echo "$GENCFG_OUTPUT" | sed -n '/^{"database"/,$p' > "$SCHEMA_FILE"
-
-if [[ ! -s "$SCHEMA_FILE" ]]; then
-    echo "ERROR: gencfg.sql produced no JSON output" >&2
-    echo "Output was:" >&2
-    echo "$GENCFG_OUTPUT" >&2
-    exit 1
-fi
-
-# Fix seq to 0 for batch mode
-python3 -c "
-import json, sys
-with open('$SCHEMA_FILE') as f:
-    data = json.load(f)
-data['seq'] = 0
-with open('$SCHEMA_FILE', 'w') as f:
-    json.dump(data, f, separators=(',', ':'))
-"
-echo "  Schema file: $SCHEMA_FILE ($(wc -c < "$SCHEMA_FILE") bytes)"
-
-# ---- Stage 4: Run LogMiner extraction ----
-echo ""
-echo "--- Stage 4: Running LogMiner extraction ---"
-
-if [[ "$DDL_MODE" -eq 1 ]]; then
-    LM_ARCHIVE_FILTER="first_change# <= $END_SCN AND next_change# >= $DICT_START_SCN"
-    LM_OPTIONS="DBMS_LOGMNR.DICT_FROM_REDO_LOGS + DBMS_LOGMNR.DDL_DICT_TRACKING + DBMS_LOGMNR.NO_ROWID_IN_STMT + DBMS_LOGMNR.COMMITTED_DATA_ONLY"
-    LM_MODE_DESC="DICT_FROM_REDO_LOGS + DDL_DICT_TRACKING"
-else
-    LM_ARCHIVE_FILTER="first_change# <= $END_SCN AND next_change# >= $START_SCN"
-    LM_OPTIONS="DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG + DBMS_LOGMNR.NO_ROWID_IN_STMT + DBMS_LOGMNR.COMMITTED_DATA_ONLY"
-    LM_MODE_DESC="DICT_FROM_ONLINE_CATALOG"
-fi
-echo "  LogMiner mode: $LM_MODE_DESC"
-
-cat > "$WORK_DIR/logminer_run.sql" <<SQL
-SET SERVEROUTPUT ON SIZE UNLIMITED
-SET LINESIZE 32767
-SET LONG 100000
-SET LONGCHUNKSIZE 100000
-SET PAGESIZE 0
-SET TRIMSPOOL ON
-SET TRIMOUT ON
-SET FEEDBACK OFF
-SET ECHO OFF
-SET HEADING OFF
-SET VERIFY OFF
-
-DECLARE
-    v_count NUMBER := 0;
-BEGIN
-    FOR rec IN (
-        SELECT name FROM v\$archived_log
-        WHERE $LM_ARCHIVE_FILTER
-          AND deleted = 'NO'
-          AND name IS NOT NULL
-        ORDER BY sequence#
-    ) LOOP
-        DBMS_LOGMNR.ADD_LOGFILE(
-            logfilename => rec.name,
-            options     => CASE WHEN v_count = 0
-                                THEN DBMS_LOGMNR.NEW
-                                ELSE DBMS_LOGMNR.ADDFILE
-                           END
-        );
-        v_count := v_count + 1;
-        DBMS_OUTPUT.PUT_LINE('Added log: ' || rec.name);
-    END LOOP;
-
-    IF v_count = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('ERROR: No archive logs found for SCN range');
-        RETURN;
-    END IF;
-
-    DBMS_OUTPUT.PUT_LINE('Starting LogMiner with ' || v_count || ' log file(s)');
-
-    DBMS_LOGMNR.START_LOGMNR(
-        startScn => $START_SCN,
-        endScn   => $END_SCN,
-        options  => $LM_OPTIONS
-    );
-END;
-/
-
-SPOOL $(oracle_spool_path)
-
-SELECT TO_CLOB(scn || '|' || operation || '|' || seg_owner || '|' || table_name || '|' || xid || '|') ||
-       REPLACE(REPLACE(sql_redo, CHR(10), ' '), CHR(13), '') || '|' ||
-       REPLACE(REPLACE(NVL(sql_undo, ''), CHR(10), ' '), CHR(13), '')
-FROM v\$logmnr_contents
-WHERE seg_owner = UPPER('$SCHEMA_OWNER')
-  AND operation IN ('INSERT', 'UPDATE', 'DELETE')
-ORDER BY scn, xid, sequence#;
-
-SPOOL OFF
-
-BEGIN
-    DBMS_LOGMNR.END_LOGMNR;
-END;
-/
-
-EXIT
-SQL
-
-echo "  Running LogMiner..."
-LM_OUTPUT=$(exec_sysdba "$WORK_DIR/logminer_run.sql")
-echo "$LM_OUTPUT" | head -20 || true
-
-fetch_spool "$WORK_DIR/logminer_raw.lst"
-
-python3 "$SCRIPT_DIR/logminer2json.py" "$WORK_DIR/logminer_raw.lst" "$WORK_DIR/logminer.json"
-LM_COUNT=$(wc -l < "$WORK_DIR/logminer.json")
-echo "  LogMiner records: $LM_COUNT"
-
-# ---- Stage 5: Run OLR in batch mode ----
-echo ""
-echo "--- Stage 5: Running OLR ---"
-
-# Backup schema file before OLR (OLR modifies the schema dir with checkpoints)
-cp "$SCHEMA_FILE" "$WORK_DIR/schema_backup.json"
-
-# Translate host paths to OLR-visible paths via driver
-C_REDO=$(olr_path "$REDO_DIR")
-C_SCHEMA=$(olr_path "$SCHEMA_DIR")
-OLR_OUTPUT="$WORK_DIR/olr_output.json"
-C_OUTPUT=$(olr_path "$OLR_OUTPUT")
-
-# Build redo-log JSON array using OLR-visible paths
-REDO_FILES_JSON=""
-for f in "$REDO_DIR"/*; do
-    [[ -f "$f" ]] || continue
-    fname=$(basename "$f")
-    if [[ -n "$REDO_FILES_JSON" ]]; then
-        REDO_FILES_JSON="$REDO_FILES_JSON, "
-    fi
-    REDO_FILES_JSON="$REDO_FILES_JSON\"$C_REDO/$fname\""
-done
-
-# Config uses OLR-visible paths
-cat > "$WORK_DIR/olr_config.json" <<EOF
-{
-  "version": "1.9.0",
-  "log-level": 3,
-  "memory": {
-    "min-mb": 32,
-    "max-mb": 256
-  },
-  "state": {
-    "type": "disk",
-    "path": "$C_SCHEMA"
-  },
-  "source": [
-    {
-      "alias": "S1",
-      "name": "TEST",
-      "reader": {
-        "type": "batch",
-        "redo-log": [$REDO_FILES_JSON],
-        "log-archive-format": "$LOG_ARCHIVE_FORMAT",
-        "start-scn": $START_SCN
-      },
-      "format": {
-        "type": "json",
-        "scn": 1,
-        "timestamp": 7,
-        "timestamp-metadata": 7,
-        "xid": 1
-      },
-      "filter": {
-        "table": [
-          {"owner": "$SCHEMA_OWNER", "table": ".*"}
-        ]
-      }
-    }
-  ],
-  "target": [
-    {
-      "alias": "T1",
-      "source": "S1",
-      "writer": {
-        "type": "file",
-        "output": "$C_OUTPUT",
-        "new-line": 1,
-        "append": 1
-      }
-    }
-  ]
-}
-EOF
-
-echo "  Running OLR (driver: $ORACLE_DRIVER)..."
-if ! run_olr "$WORK_DIR/olr_config.json" > "$WORK_DIR/olr_stdout.log" 2>&1; then
-    echo "ERROR: OLR exited with non-zero status" >&2
-    cat "$WORK_DIR/olr_stdout.log" >&2
-    exit 1
-fi
-
-if [[ ! -f "$OLR_OUTPUT" ]]; then
-    echo "ERROR: OLR did not produce output file" >&2
-    cat "$WORK_DIR/olr_stdout.log" >&2
-    exit 1
-fi
-
-OLR_LINES=$(wc -l < "$OLR_OUTPUT")
-echo "  OLR output lines: $OLR_LINES"
-
-# Clean up runtime checkpoint files and restore original schema
-rm -f "$SCHEMA_DIR"/TEST-chkpt.json "$SCHEMA_DIR"/TEST-chkpt-*.json
-cp "$WORK_DIR/schema_backup.json" "$SCHEMA_FILE"
+# Stage 5: Run OLR in batch mode
+stage_run_olr
 
 # ---- Stage 6: Compare ----
 echo ""
@@ -511,7 +154,7 @@ fi
 echo ""
 if [[ $COMPARE_RESULT -eq 0 ]]; then
     echo "--- Stage 7: Saving golden file ---"
-    EXPECTED_DIR="$TESTS_DIR/3-generated/expected/$FIXTURE_NAME"
+    EXPECTED_DIR="$OUTPUT_BASE/expected/$FIXTURE_NAME"
     mkdir -p "$EXPECTED_DIR"
     cp "$OLR_OUTPUT" "$EXPECTED_DIR/output.json"
     echo "  Golden file saved: $EXPECTED_DIR/output.json"

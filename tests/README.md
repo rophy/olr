@@ -88,13 +88,14 @@ tests/
     schema/
     redo/
   scripts/
-    generate.sh                     # Generate + validate one fixture
-    generate-rac.sh                 # Generate RAC multi-thread fixtures
+    generate.sh                     # Generate + validate one fixture (all topologies)
     compare.py                      # OLR vs LogMiner comparison
     logminer2json.py                # LogMiner spool → JSON converter
     drivers/
+      base.sh                       # Base driver: stage functions + primitive stubs
       docker.sh                     # Default: docker exec + compose exec
       local.sh                      # Local Oracle + local OLR binary
+      rac.sh                        # RAC: SSH + podman exec to RAC VM
     oracle-init/
       01-setup.sh                   # Enables archivelog + supplemental logging
   .work/                            # Temporary generation working dirs (gitignored)
@@ -140,8 +141,9 @@ INCLUDE_TAGS=us7ascii make -C tests/1-environments/xe-21-official test-sql
 EXCLUDE_TAGS=slow make -C tests/1-environments/free-23 test-sql
 ```
 
-The `rac` tag is used for `.rac.sql` scenarios that require `generate-rac.sh`
-and a live RAC VM — they are automatically skipped in standard workflows.
+The `rac` tag is used for `.rac.sql` scenarios that require the `rac` driver
+(`ORACLE_DRIVER=rac`) and a live RAC VM — they are automatically skipped in
+standard workflows.
 
 ### DDL Scenarios
 
@@ -165,7 +167,7 @@ RAC multi-thread scenarios use `.rac.sql` files with a block-based format:
 ```
 
 Multiple `@NODE1`/`@NODE2` blocks are supported and executed in order.
-Generate with `scripts/generate-rac.sh` against a live Oracle RAC VM.
+Generate with `ORACLE_DRIVER=rac ./scripts/generate.sh` against a live Oracle RAC VM.
 
 ## Oracle Drivers
 
@@ -175,6 +177,7 @@ Generate with `scripts/generate-rac.sh` against a live Oracle RAC VM.
 |--------|----------------------|--------------|
 | `docker` | `docker exec` into Oracle container | `docker compose exec olr` |
 | `local` | Local `sqlplus` binary | Local `OLR_BINARY` |
+| `rac` | SSH to RAC VM + `podman exec` | `docker run` with OLR image |
 
 ```bash
 # Use local Oracle and local OLR binary
@@ -184,9 +187,11 @@ DB_CONN=olr_test/olr_test@//localhost:1521/FREEPDB1 \
   ./scripts/generate.sh basic-crud
 ```
 
-Custom drivers can be added as `scripts/drivers/<name>.sh`. Each driver must
-implement: `exec_sysdba`, `exec_user`, `oracle_spool_path`, `fetch_spool`,
-`fetch_archive`, `olr_path`, `run_olr`.
+Custom drivers can be added as `scripts/drivers/<name>.sh`. Each driver sources
+`base.sh` and overrides primitives: `_exec_sysdba`, `_exec_user`,
+`_oracle_spool_path`, `_fetch_spool`, `_fetch_archive`, `_olr_path`,
+`_run_olr_cmd`. Drivers can also override stage functions and set variables
+like `SWITCH_LOGFILE_SQL`, `ARCHIVE_LOG_VIEW`, `FIXTURE_SUFFIX`.
 
 ## Comparison Details
 
@@ -218,7 +223,7 @@ fixture artifacts from the SQL test workflows, and runs `ctest` inside Docker.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORACLE_DRIVER` | `docker` | Driver to use: `docker` or `local` |
+| `ORACLE_DRIVER` | `docker` | Driver to use: `docker`, `local`, or `rac` |
 | `ORACLE_TARGET` | `free-23` | Environment name (matches `1-environments/` subdir) |
 | `ORACLE_CONTAINER` | `oracle` | Docker container name for Oracle (docker driver) |
 | `DOCKER_EXEC_USER` | — | User for `docker exec` (set to `oracle` for official images) |
@@ -226,6 +231,7 @@ fixture artifacts from the SQL test workflows, and runs `ctest` inside Docker.
 | `SCHEMA_OWNER` | `OLR_TEST` | Schema owner for LogMiner filter |
 | `PDB_NAME` | `FREEPDB1` | PDB name for schema generation |
 | `OLR_BINARY` | — | Path to OLR binary (required for `local` driver) |
+| `OUTPUT_BASE` | `tests/3-generated` | Output directory for generated fixtures |
 | `INCLUDE_TAGS` | — | Space-separated tags; only run matching scenarios |
 | `EXCLUDE_TAGS` | — | Space-separated tags; skip matching scenarios |
 
