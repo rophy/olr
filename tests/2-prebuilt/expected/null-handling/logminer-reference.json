@@ -1,7 +1,0 @@
-{"after": {"COL_A": "has value", "COL_B": "100", "COL_C": "01-JAN-25", "ID": "1"}, "op": "INSERT", "owner": "OLR_TEST", "scn": "3810402", "table": "TEST_NULLS", "xid": "0A001200DB030000"}
-{"after": {"COL_A": null, "COL_B": null, "COL_C": null, "ID": "2"}, "op": "INSERT", "owner": "OLR_TEST", "scn": "3810402", "table": "TEST_NULLS", "xid": "0A001200DB030000"}
-{"after": {"COL_A": "partial", "COL_B": null, "COL_C": "15-JUN-25", "ID": "3"}, "op": "INSERT", "owner": "OLR_TEST", "scn": "3810402", "table": "TEST_NULLS", "xid": "0A001200DB030000"}
-{"after": {"COL_A": null, "COL_B": null}, "before": {"COL_A": "has value", "COL_B": "100", "COL_C": "01-JAN-25", "ID": "1"}, "op": "UPDATE", "owner": "OLR_TEST", "scn": "3810416", "table": "TEST_NULLS", "xid": "0A001A00DB030000"}
-{"after": {"COL_A": "now has value", "COL_B": "999"}, "before": {"COL_A": null, "COL_B": null, "COL_C": null, "ID": "2"}, "op": "UPDATE", "owner": "OLR_TEST", "scn": "3810419", "table": "TEST_NULLS", "xid": "040001000F030000"}
-{"after": {"COL_A": "now has value", "COL_B": "999", "COL_C": null, "ID": "2"}, "before": {"COL_A": "now has value", "COL_B": "999", "COL_C": null, "ID": "2"}, "op": "UPDATE", "owner": "OLR_TEST", "scn": "3810422", "table": "TEST_NULLS", "xid": "06001200E1020000"}
-{"before": {"COL_A": "partial", "COL_B": null, "COL_C": "15-JUN-25", "ID": "3"}, "op": "DELETE", "owner": "OLR_TEST", "scn": "3810425", "table": "TEST_NULLS", "xid": "02000800F3020000"}

@@ -1,2 +1,0 @@
-# LogMiner does not support BOOLEAN type in SQL_REDO (Oracle 23ai limitation)
-# Golden file generated directly from OLR output without LogMiner cross-validation
