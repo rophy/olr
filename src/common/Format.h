@@ -219,13 +219,14 @@ namespace OpenLogReplicator {
         COLUMN_FORMAT columnFormat;
         UNKNOWN_TYPE unknownType;
         USER_TYPE userType;
+        uint64_t charsetOverrideId;
 
         Format(DB_FORMAT newDbFormat, ATTRIBUTES_FORMAT newAttributesFormat, INTERVAL_DTS_FORMAT newIntervalDtsFormat,
                INTERVAL_YTM_FORMAT newIntervalYtmFormat, MESSAGE_FORMAT newMessageFormat, RID_FORMAT newRidFormat, REDO_THREAD_FORMAT newRedoThreadFormat,
                XID_FORMAT newXidFormat, TIMESTAMP_FORMAT newTimestampFormat, TIMESTAMP_FORMAT newTimestampMetadataFormat,
                TIMESTAMP_TZ_FORMAT newTimestampTzFormat, TIMESTAMP_TYPE newTimestampType, CHAR_FORMAT newCharFormat, SCN_FORMAT newScnFormat,
                SCN_TYPE newScnType, UNKNOWN_FORMAT newUnknownFormat, SCHEMA_FORMAT newSchemaFormat, COLUMN_FORMAT newColumnFormat, UNKNOWN_TYPE newUnknownType,
-               USER_TYPE newUserType):
+               USER_TYPE newUserType, uint64_t newCharsetOverrideId = 0):
                 dbFormat(newDbFormat),
                 attributesFormat(newAttributesFormat),
                 intervalDtsFormat(newIntervalDtsFormat),
@@ -245,7 +246,8 @@ namespace OpenLogReplicator {
                 schemaFormat(newSchemaFormat),
                 columnFormat(newColumnFormat),
                 unknownType(newUnknownType),
-                userType(newUserType) {}
+                userType(newUserType),
+                charsetOverrideId(newCharsetOverrideId) {}
 
         [[nodiscard]] bool isAttributesFormatBegin() const {
             return (static_cast<unsigned char>(attributesFormat) & static_cast<unsigned char>(ATTRIBUTES_FORMAT::BEGIN)) != 0;
@@ -265,6 +267,10 @@ namespace OpenLogReplicator {
 
         [[nodiscard]] bool isCharFormatHex() const {
             return (static_cast<unsigned char>(charFormat) & static_cast<unsigned char>(CHAR_FORMAT::HEX)) != 0;
+        }
+
+        [[nodiscard]] uint64_t getCharsetOverrideId() const {
+            return charsetOverrideId;
         }
 
         [[nodiscard]] bool isScnTypeCommitValue() const {

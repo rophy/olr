@@ -55,6 +55,25 @@ Value is a bitmask:
 _TIP:_ Use `0x0001` only when the consumer expects the source bytes unchanged.
 Use `0x0002` to avoid encoding issues when the charset is ambiguous.
 
+|`char-set` [[char-set]]
+|_string_, max length: 256, optional
+|Override the character set used to decode character columns (`CHAR`, `VARCHAR2`, `CLOB`).
+When set, OLR decodes all user-table character data using this charset instead of the database-declared `NLS_CHARACTERSET`.
+System/dictionary tables are not affected.
+
+Use this when the Oracle database reports a single-byte charset (e.g., `US7ASCII`) but the application stores multi-byte encoded data as raw pass-through bytes (a common practice with legacy CJK databases).
+
+The value must be a valid Oracle character set name supported by OLR, for example:
+
+* `ZHT16BIG5` — Traditional Chinese (Big5)
+* `ZHS16GBK` — Simplified Chinese (GBK)
+* `JA16SJIS` — Japanese (Shift-JIS)
+* `JA16EUC` — Japanese (EUC-JP)
+* `KO16MSWIN949` — Korean
+* `AL32UTF8` — UTF-8
+
+_NOTE:_ This option produces valid UTF-8 JSON output, unlike `char` = `0x0001` which copies raw bytes that may not be valid UTF-8.
+
 |`column` [[column]]
 |_integer_, min: 0, max: 2, default: 0
 |Controls which columns appear in messages:
@@ -280,6 +299,7 @@ Options control epoch vs ISO-8601 and how the timezone is attached (comma, space
     "type": "json",
     "attributes": 0,
     "char": 0,
+    "char-set": "AL32UTF8",
     "column": 0,
     "flush-buffer": 1048576,
     "message": 1,

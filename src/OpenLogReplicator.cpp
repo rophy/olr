@@ -645,6 +645,7 @@ namespace OpenLogReplicator {
                 static const std::vector<std::string> formatNames{
                     "attributes",
                     "char",
+                    "char-set",
                     "column",
                     "db",
                     "flush-buffer",
@@ -814,6 +815,19 @@ namespace OpenLogReplicator {
                 charFormat = static_cast<Format::CHAR_FORMAT>(val);
             }
 
+            uint64_t charsetOverrideId = 0;
+            if (formatJson.HasMember("char-set")) {
+                const std::string charsetName = Ctx::getJsonFieldS(configFileName, 256, formatJson, "char-set");
+                for (const auto& [mapId, characterSet] : locales->characterMap) {
+                    if (charsetName == characterSet->name) {
+                        charsetOverrideId = mapId;
+                        break;
+                    }
+                }
+                if (charsetOverrideId == 0)
+                    throw ConfigurationException(30001, "bad JSON, unknown \"char-set\" value: " + charsetName);
+            }
+
             if (formatJson.HasMember("scn")) {
                 const uint val = Ctx::getJsonFieldU(configFileName, formatJson, "scn");
                 if (val > 1)
@@ -868,7 +882,7 @@ namespace OpenLogReplicator {
             Builder* builder;
             Format format(dbFormat, attributesFormat, intervalDtsFormat, intervalYtmFormat, messageFormat, ridFormat, redoThreadFormat, xidFormat,
                 timestampFormat, timestampMetadataFormat, timestampTzFormat, timestampType, charFormat, scnFormat, scnType, unknownFormat,
-                schemaFormat, columnFormat, unknownType, userType);
+                schemaFormat, columnFormat, unknownType, userType, charsetOverrideId);
             if (formatType == "json" || formatType == "debezium") {
                 builder = new BuilderJson(ctx, locales, metadata, format, flushBuffer);
             } else if (formatType == "protobuf") {

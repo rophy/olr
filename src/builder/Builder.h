@@ -1085,7 +1085,8 @@ namespace OpenLogReplicator {
 
         void parseString(const uint8_t* data, uint64_t size, uint64_t charsetId, FileOffset fileOffset, bool appendData, bool hasPrev, bool hasNext,
                          bool isSystem) {
-            const CharacterSet* characterSet = locales->characterMap[charsetId];
+            const uint64_t effectiveCharsetId = (format.getCharsetOverrideId() != 0 && !isSystem) ? format.getCharsetOverrideId() : charsetId;
+            const CharacterSet* characterSet = locales->characterMap[effectiveCharsetId];
             if (unlikely(characterSet == nullptr && !format.isCharFormatNoMapping()))
                 throw RedoLogException(50010, "can't find character set map for id = " + std::to_string(charsetId) + " at offset: " + fileOffset.toString());
             if (!appendData)
