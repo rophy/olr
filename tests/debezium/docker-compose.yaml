@@ -1,0 +1,78 @@
+services:
+  oracle:
+    image: gvenzl/oracle-xe:21.3.0-slim-faststart
+    container_name: dbz-oracle
+    ports:
+      - "${ORACLE_PORT:-1522}:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: olr_test
+      APP_USER_PASSWORD: olr_test
+    volumes:
+      - ./oracle-init:/container-entrypoint-initdb.d
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  receiver:
+    image: python:3.12-slim
+    container_name: dbz-receiver
+    command: ["python3", "/app/debezium-receiver.py"]
+    ports:
+      - "8080:8080"
+    environment:
+      OUTPUT_DIR: /app/output
+    volumes:
+      - ../scripts/debezium-receiver.py:/app/debezium-receiver.py:ro
+      - ./output:/app/output
+
+  olr:
+    image: olr-dev:${OLR_IMAGE_TAG:-latest}
+    container_name: dbz-olr
+    entrypoint: ["/bin/bash", "-c", "mkdir -p /olr-data/checkpoint && exec /opt/OpenLogReplicator/OpenLogReplicator \"$@\"", "--"]
+    command: ["-r", "-f", "/config/olr-config.json"]
+    working_dir: /olr-data
+    group_add:
+      - "54321"  # oinstall group — read access to Oracle redo logs
+    depends_on:
+      oracle:
+        condition: service_healthy
+    tmpfs:
+      - /olr-data:uid=1000,gid=54322
+    volumes:
+      - ./config/olr-config.json:/config/olr-config.json:ro
+      - oracle-data:/opt/oracle/oradata:ro
+
+  dbz-logminer:
+    image: quay.io/debezium/server:3.0
+    container_name: dbz-logminer
+    depends_on:
+      oracle:
+        condition: service_healthy
+      receiver:
+        condition: service_started
+    volumes:
+      - ./config/application-logminer.properties:/debezium/config/application.properties:ro
+      - ./lib/ojdbc8.jar:/debezium/lib/ojdbc8.jar:ro
+      - dbz-logminer-data:/debezium/data
+
+  dbz-olr:
+    image: quay.io/debezium/server:3.0
+    container_name: dbz-olr-adapter
+    depends_on:
+      olr:
+        condition: service_started
+      receiver:
+        condition: service_started
+    volumes:
+      - ./config/application-olr.properties:/debezium/config/application.properties:ro
+      - ./lib/ojdbc8.jar:/debezium/lib/ojdbc8.jar:ro
+      - dbz-olr-data:/debezium/data
+
+volumes:
+  oracle-data:
+  dbz-logminer-data:
+  dbz-olr-data:

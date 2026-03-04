@@ -1,0 +1,42 @@
+{
+  "version": "1.9.0",
+  "log-level": 4,
+  "memory": {
+    "min-mb": 64,
+    "max-mb": 256
+  },
+  "source": [
+    {
+      "alias": "SOURCE",
+      "name": "XE",
+      "reader": {
+        "type": "online",
+        "user": "c##dbzuser",
+        "password": "dbz",
+        "server": "//oracle:1521/XEPDB1"
+      },
+      "format": {
+        "type": "debezium",
+        "scn-type": 1,
+        "timestamp-type": 1,
+        "user-type": 0,
+        "redo-thread": 0
+      },
+      "filter": {
+        "table": [
+          {"owner": "OLR_TEST", "table": ".*"}
+        ]
+      }
+    }
+  ],
+  "target": [
+    {
+      "alias": "DEBEZIUM",
+      "source": "SOURCE",
+      "writer": {
+        "type": "network",
+        "uri": "0.0.0.0:5000"
+      }
+    }
+  ]
+}

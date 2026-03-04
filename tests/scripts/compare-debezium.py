@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Compare Debezium LogMiner vs OLR adapter outputs.
+
+Usage: compare-debezium.py <logminer.jsonl> <olr.jsonl>
+
+Both inputs are JSONL files with Debezium envelope events:
+  {"before":..., "after":..., "source":..., "op":..., "ts_ms":...}
+
+Compares the semantic content (op, table, before/after columns) while
+ignoring connector-specific metadata (source block, timestamps).
+
+Exits 0 on match, 1 on mismatch with diff report.
+"""
+
+import json
+import sys
+
+SENTINEL_TABLE = 'DEBEZIUM_SENTINEL'
+OP_MAP = {'c': 'INSERT', 'u': 'UPDATE', 'd': 'DELETE'}
+
+
+def normalize_value(v):
+    """Normalize a value for comparison. None stays None."""
+    if v is None:
+        return None
+    return str(v)
+
+
+def normalize_columns(d):
+    """Normalize a dict of column->value to column->string."""
+    if not d or not isinstance(d, dict):
+        return {}
+    return {k: normalize_value(v) for k, v in d.items()}
+
+
+def parse_debezium_jsonl(path):
+    """Parse a Debezium JSONL file into normalized records."""
+    records = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            event = json.loads(line)
+
+            source = event.get('source', {})
+            table = source.get('table', '')
+            schema = source.get('schema', '')
+            op = event.get('op', '')
+
+            # Skip sentinel and non-DML events
+            if table == SENTINEL_TABLE:
+                continue
+            if op not in OP_MAP:
+                continue
+
+            records.append({
+                'op': OP_MAP[op],
+                'schema': schema,
+                'table': table,
+                'before': normalize_columns(event.get('before')),
+                'after': normalize_columns(event.get('after')),
+            })
+    return records
+
+
+def values_match(a, b):
+    """Compare two normalized values with type tolerance."""
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    if a == b:
+        return True
+    # Numeric tolerance
+    try:
+        fa, fb = float(a), float(b)
+        if fa == fb:
+            return True
+        if fa != 0 and abs(fa - fb) / abs(fa) < 1e-6:
+            return True
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+def columns_match(cols_a, cols_b):
+    """Compare two column dicts. Returns list of diff strings."""
+    diffs = []
+    all_keys = set(cols_a.keys()) | set(cols_b.keys())
+    for key in sorted(all_keys):
+        va = cols_a.get(key)
+        vb = cols_b.get(key)
+        if key not in cols_b or key not in cols_a:
+            # One side has extra columns — skip (supplemental logging diffs)
+            continue
+        if not values_match(va, vb):
+            diffs.append(f"  column {key}: LogMiner={va!r}, OLR={vb!r}")
+    return diffs
+
+
+def match_score(a, b):
+    """Score how well two records match.
+    Returns (match_count, mismatch_count). (-1,0) if incompatible.
+    """
+    if a['op'] != b['op'] or a['table'] != b['table']:
+        return (-1, 0)
+
+    matches = 0
+    mismatches = 0
+    for section in ('after', 'before'):
+        ca = a.get(section, {})
+        cb = b.get(section, {})
+        common = set(ca.keys()) & set(cb.keys())
+        for key in common:
+            if values_match(ca.get(key), cb.get(key)):
+                matches += 1
+            else:
+                mismatches += 1
+    return (matches, mismatches)
+
+
+def compare(lm_records, olr_records):
+    """Compare LogMiner vs OLR records using content-based matching."""
+    diffs = []
+
+    if len(lm_records) != len(olr_records):
+        diffs.append(
+            f"Record count mismatch: LogMiner={len(lm_records)}, OLR={len(olr_records)}"
+        )
+
+    used_olr = set()
+    pairs = []
+
+    for i, lm in enumerate(lm_records):
+        best_j = None
+        best_matches = -1
+        best_mismatches = float('inf')
+
+        for j, olr in enumerate(olr_records):
+            if j in used_olr:
+                continue
+            m, mm = match_score(lm, olr)
+            if m < 0:
+                continue
+            if (mm < best_mismatches) or (mm == best_mismatches and m > best_matches):
+                best_j = j
+                best_matches = m
+                best_mismatches = mm
+
+        if best_j is not None:
+            used_olr.add(best_j)
+            pairs.append((i, best_j))
+        else:
+            diffs.append(
+                f"LogMiner record #{i+1} ({lm['op']} {lm['table']}): "
+                f"no matching OLR record"
+            )
+
+    for j in range(len(olr_records)):
+        if j not in used_olr:
+            olr = olr_records[j]
+            diffs.append(
+                f"OLR record #{j+1} ({olr['op']} {olr['table']}): "
+                f"no matching LogMiner record"
+            )
+
+    for lm_idx, olr_idx in pairs:
+        lm = lm_records[lm_idx]
+        olr = olr_records[olr_idx]
+
+        if lm['op'] in ('INSERT', 'UPDATE'):
+            cd = columns_match(lm.get('after', {}), olr.get('after', {}))
+            if cd:
+                diffs.append(f"Record (LM#{lm_idx+1}<>OLR#{olr_idx+1}) "
+                             f"({lm['op']}) 'after' diffs:")
+                diffs.extend(cd)
+
+        if lm['op'] in ('UPDATE', 'DELETE'):
+            cd = columns_match(lm.get('before', {}), olr.get('before', {}))
+            if cd:
+                diffs.append(f"Record (LM#{lm_idx+1}<>OLR#{olr_idx+1}) "
+                             f"({lm['op']}) 'before' diffs:")
+                diffs.extend(cd)
+
+    return diffs
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} <logminer.jsonl> <olr.jsonl>", file=sys.stderr)
+        sys.exit(2)
+
+    lm_records = parse_debezium_jsonl(sys.argv[1])
+    olr_records = parse_debezium_jsonl(sys.argv[2])
+
+    diffs = compare(lm_records, olr_records)
+
+    if diffs:
+        print("MISMATCH: LogMiner vs OLR Debezium output differs:")
+        for d in diffs:
+            print(d)
+        print(f"\nLogMiner records: {len(lm_records)}")
+        print(f"OLR records: {len(olr_records)}")
+        sys.exit(1)
+    else:
+        print(f"MATCH: {len(lm_records)} records verified")
+        sys.exit(0)
+
+
+if __name__ == '__main__':
+    main()
