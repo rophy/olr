@@ -119,7 +119,7 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if not hasattr(item, "callspec"):
             continue
-        # Try fixture_name (test_fixtures) or scenario (test_generate)
+        # Try fixture_name (test_fixtures) or scenario (test_e2e)
         name = item.callspec.params.get(
             "fixture_name",
             item.callspec.params.get("scenario", ""),

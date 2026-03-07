@@ -1,4 +1,4 @@
-"""SQL fixture generation tests — runs generate.sh per scenario against a live Oracle."""
+"""End-to-end tests — runs generate.sh per scenario against a live Oracle."""
 
 import os
 import subprocess
@@ -55,7 +55,7 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("scenario", discover_scenarios())
 
 
-def test_generate(scenario, oracle_env, oracle_driver):
+def test_e2e(scenario, oracle_env, oracle_driver):
     """Run generate.sh for one scenario and assert it passes."""
     env = {
         **os.environ,

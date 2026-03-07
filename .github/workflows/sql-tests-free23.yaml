@@ -54,7 +54,7 @@ jobs:
             WITHPROMETHEUS=1
 
       - name: Generate all fixtures
-        run: cd tests && pytest test_generate.py -v --tb=short --oracle-env=${{ env.ORACLE_TARGET }}
+        run: cd tests && pytest test_e2e.py -v --tb=short --oracle-env=${{ env.ORACLE_TARGET }}
 
       - name: Upload generated fixtures
         uses: actions/upload-artifact@v4

@@ -24,7 +24,7 @@ make test-redo
 make test-redo PYTEST_ARGS="-m 'not rac'"
 
 # Generate fixtures (starts/stops Oracle containers automatically)
-cd tests && pytest test_generate.py -v --oracle-env=free-23
+cd tests && pytest test_e2e.py -v --oracle-env=free-23
 
 # Archive generated fixtures for committing
 make fixtures
@@ -54,7 +54,7 @@ pytest test_fixtures.py -m "not ddl"     # skip DDL scenarios
 pytest test_fixtures.py -m "us7ascii"    # only us7ascii scenarios
 ```
 
-### Fixture Generation (`test_generate.py`)
+### End-to-End Tests (`test_e2e.py`)
 
 Runs `generate.sh` per scenario against a live Oracle instance. The session
 fixture automatically starts/stops containers via `docker compose` (or custom
@@ -65,16 +65,16 @@ loaded from `sql/environments/<env>/.env` if present.
 
 ```bash
 # Generate all fixtures for Oracle Free 23
-cd tests && pytest test_generate.py -v --oracle-env=free-23
+cd tests && pytest test_e2e.py -v --oracle-env=free-23
 
 # Run a single scenario
-cd tests && pytest test_generate.py -v --oracle-env=free-23 -k basic-crud
+cd tests && pytest test_e2e.py -v --oracle-env=free-23 -k basic-crud
 
 # Skip DDL scenarios
-cd tests && pytest test_generate.py -v --oracle-env=free-23 -m "not ddl"
+cd tests && pytest test_e2e.py -v --oracle-env=free-23 -m "not ddl"
 
 # Use RAC driver
-cd tests && pytest test_generate.py -v --oracle-env=rac --oracle-driver=rac
+cd tests && pytest test_e2e.py -v --oracle-env=rac --oracle-driver=rac
 ```
 
 The `sql/scripts/generate.sh` script runs 7 stages per scenario:
@@ -102,7 +102,7 @@ automatically by `make test-redo` via timestamp-based Makefile rules.
 tests/
   conftest.py                         # Fixture discovery + SQL tag → pytest marker mapping
   test_fixtures.py                    # Redo log regression tests
-  test_generate.py                    # SQL fixture generation tests
+  test_e2e.py                    # End-to-end tests (requires live Oracle)
   pytest.ini                          # Marker registration
 
   fixtures/                           # Committed fixtures (tar.gz archives)
