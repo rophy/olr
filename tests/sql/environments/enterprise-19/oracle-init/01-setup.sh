@@ -8,12 +8,16 @@ set -e
 
 # Enable supplemental logging (idempotent)
 sqlplus -S / as sysdba <<'SQL'
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+WHENEVER OSERROR EXIT FAILURE
 ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;
 ALTER SYSTEM SET db_recovery_file_dest_size=10G;
 SQL
 
 # Create test user in PDB (idempotent — ignore if already exists)
 sqlplus -S / as sysdba <<'SQL'
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+WHENEVER OSERROR EXIT FAILURE
 ALTER SESSION SET CONTAINER=ORCLPDB1;
 
 -- Create user if not exists (ignore ORA-01920: user name conflicts)
