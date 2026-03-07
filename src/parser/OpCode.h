@@ -1572,9 +1572,13 @@ namespace OpenLogReplicator {
             redoLogRecord->slot = ctx->read16(redoLogRecord->data(fieldPos + 20));
             redoLogRecord->cc = *redoLogRecord->data(fieldPos + 23);
 
-            if (unlikely(fieldSize < 26 + (static_cast<uint>(redoLogRecord->cc) + 7U) / 8U))
-                throw RedoLogException(50061, "too short field kdo OpCode URP for nulls: " + std::to_string(fieldSize) + " offset: " +
-                                       redoLogRecord->fileOffset.toString());
+            if (unlikely(fieldSize < 26 + (static_cast<uint>(redoLogRecord->cc) + 7U) / 8U)) {
+                ctx->warning(50061, "too short field kdo OpCode URP for nulls: " + std::to_string(fieldSize) + " offset: " +
+                                    redoLogRecord->fileOffset.toString());
+                redoLogRecord->cc = 0;
+                redoLogRecord->nullsDelta = fieldPos + 26;
+                return;
+            }
 
             redoLogRecord->nullsDelta = fieldPos + 26;
             const uint8_t* nulls = redoLogRecord->data(redoLogRecord->nullsDelta);
