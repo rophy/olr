@@ -1,6 +1,6 @@
 TESTS_DIR := $(abspath ..)
-SCRIPTS_DIR := $(TESTS_DIR)/scripts
-SCENARIOS := $(wildcard $(TESTS_DIR)/0-inputs/*.sql)
+SCRIPTS_DIR := $(TESTS_DIR)/sql/scripts
+SCENARIOS := $(wildcard $(TESTS_DIR)/sql/inputs/*.sql)
 SCENARIO ?=
 OJDBC_VERSION := 21.14.0.0
 OJDBC_URL := https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/$(OJDBC_VERSION)/ojdbc8-$(OJDBC_VERSION).jar

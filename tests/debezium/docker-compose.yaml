@@ -26,7 +26,7 @@ services:
     environment:
       OUTPUT_DIR: /app/output
     volumes:
-      - ../scripts/debezium-receiver.py:/app/debezium-receiver.py:ro
+      - ../sql/scripts/debezium-receiver.py:/app/debezium-receiver.py:ro
       - ./output:/app/output
 
   olr:

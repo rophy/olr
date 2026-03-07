@@ -43,6 +43,12 @@ if [[ -n "$SCENARIO_TAGS" ]]; then
     exit 0
 fi
 
+# Skip DDL scenarios (mid-stream ALTER TABLE can't be replayed in twin-test)
+if grep -q '^-- @DDL' "$SCENARIO_SQL" 2>/dev/null; then
+    echo "SKIP: $SCENARIO uses @DDL — not compatible with Debezium twin-test"
+    exit 0
+fi
+
 echo "=== Debezium twin-test: $SCENARIO ==="
 
 # ---- Stage 1: Verify services ----
