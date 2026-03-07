@@ -17,8 +17,9 @@ services:
       APP_USER_PASSWORD: olr_test
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d
+    env_file: .env
     healthcheck:
-      test: ["CMD", "healthcheck.sh"]
+      test: ["CMD-SHELL", "test -f /tmp/olr_init_done && echo 'SELECT 1 FROM dual;' | sqlplus -S \"${DB_CONN}\" | grep -q 1"]
       interval: 10s
       timeout: 5s
       retries: 30
