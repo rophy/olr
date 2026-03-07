@@ -12,9 +12,7 @@ SELECT LOG_MODE FROM V$DATABASE;
 SQL
 )
 
-if echo "$ARCHIVELOG" | grep -q "ARCHIVELOG"; then
-    echo "01-setup.sh: Archivelog already enabled, skipping DB bounce."
-else
+if echo "$ARCHIVELOG" | grep -q "NOARCHIVELOG"; then
     echo "01-setup.sh: Enabling archivelog mode (requires DB bounce)..."
     sqlplus -S / as sysdba <<'SQL'
 SHUTDOWN IMMEDIATE;
