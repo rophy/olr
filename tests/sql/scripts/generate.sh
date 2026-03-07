@@ -12,7 +12,7 @@
 #
 # Prerequisites:
 #   - Oracle accessible via the selected driver (default: docker)
-#   - For docker driver: containers running via make -C tests/1-environments/$ORACLE_TARGET up
+#   - For docker driver: containers running via make -C tests/sql/environments/$ORACLE_TARGET up
 #
 # Environment variables:
 #   ORACLE_DRIVER    — Driver to use: docker (default), local, or rac
@@ -23,17 +23,18 @@
 #                      (default: olr_test/olr_test@//localhost:1521/FREEPDB1)
 #   SCHEMA_OWNER     — Schema owner for LogMiner filter (default: OLR_TEST)
 #   PDB_NAME         — PDB service name (default: FREEPDB1)
-#   OUTPUT_BASE      — Output directory (default: $TESTS_DIR/3-generated)
+#   OUTPUT_BASE      — Output directory (default: $SQL_DIR/generated)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SQL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TESTS_DIR="$(cd "$SQL_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 
 # Oracle target environment (used by docker driver)
 ORACLE_TARGET="${ORACLE_TARGET:-free-23}"
-ENV_DIR="$TESTS_DIR/1-environments/$ORACLE_TARGET"
+ENV_DIR="$SQL_DIR/environments/$ORACLE_TARGET"
 
 # Defaults
 DB_CONN="${DB_CONN:-olr_test/olr_test@//localhost:1521/FREEPDB1}"
@@ -50,24 +51,54 @@ DRIVER_FILE="$SCRIPT_DIR/drivers/${ORACLE_DRIVER}.sh"
 # shellcheck source=/dev/null
 source "$DRIVER_FILE"
 
-# Try .sql first, then .rac.sql
-SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.sql"
-if [[ ! -f "$SCENARIO_SQL" ]]; then
-    SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.rac.sql"
+# Detect input format: single file (.sql/.rac.sql) or directory (setup.sql + test.sql)
+INPUTS_DIR="$SQL_DIR/inputs"
+HAS_FILE=0
+HAS_DIR=0
+[[ -f "$INPUTS_DIR/${SCENARIO}.sql" ]] || [[ -f "$INPUTS_DIR/${SCENARIO}.rac.sql" ]] && HAS_FILE=1
+[[ -d "$INPUTS_DIR/${SCENARIO}" ]] && [[ -f "$INPUTS_DIR/${SCENARIO}/test.sql" ]] && HAS_DIR=1
+
+# Conflict check
+if [[ "$HAS_FILE" -eq 1 ]] && [[ "$HAS_DIR" -eq 1 ]]; then
+    echo "ERROR: Conflicting inputs for '$SCENARIO':" >&2
+    echo "  Found both file and directory:" >&2
+    [[ -f "$INPUTS_DIR/${SCENARIO}.sql" ]] && echo "    $INPUTS_DIR/${SCENARIO}.sql" >&2
+    [[ -f "$INPUTS_DIR/${SCENARIO}.rac.sql" ]] && echo "    $INPUTS_DIR/${SCENARIO}.rac.sql" >&2
+    echo "    $INPUTS_DIR/${SCENARIO}/" >&2
+    echo "  Remove one to resolve the conflict." >&2
+    exit 1
 fi
 
-if [[ ! -f "$SCENARIO_SQL" ]]; then
-    echo "ERROR: Scenario file not found for: $SCENARIO" >&2
+if [[ "$HAS_DIR" -eq 1 ]]; then
+    # Split mode: setup.sql (optional) + test.sql (required)
+    SCENARIO_MODE=split
+    SETUP_SQL=""
+    [[ -f "$INPUTS_DIR/${SCENARIO}/setup.sql" ]] && SETUP_SQL="$INPUTS_DIR/${SCENARIO}/setup.sql"
+    SCENARIO_SQL="$INPUTS_DIR/${SCENARIO}/test.sql"
+elif [[ "$HAS_FILE" -eq 1 ]]; then
+    # Single-file mode
+    SCENARIO_MODE=single
+    SCENARIO_SQL="$INPUTS_DIR/${SCENARIO}.sql"
+    if [[ ! -f "$SCENARIO_SQL" ]]; then
+        SCENARIO_SQL="$INPUTS_DIR/${SCENARIO}.rac.sql"
+    fi
+else
+    echo "ERROR: Scenario not found for: $SCENARIO" >&2
     echo "Looked for:" >&2
-    echo "  $TESTS_DIR/0-inputs/${SCENARIO}.sql" >&2
-    echo "  $TESTS_DIR/0-inputs/${SCENARIO}.rac.sql" >&2
+    echo "  $INPUTS_DIR/${SCENARIO}.sql" >&2
+    echo "  $INPUTS_DIR/${SCENARIO}.rac.sql" >&2
+    echo "  $INPUTS_DIR/${SCENARIO}/test.sql" >&2
     echo "Available scenarios:" >&2
-    ls "$TESTS_DIR/0-inputs/"*.sql "$TESTS_DIR/0-inputs/"*.rac.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.rac\.sql$//;s/\.sql$//' | sort -u >&2
+    { ls "$INPUTS_DIR/"*.sql "$INPUTS_DIR/"*.rac.sql 2>/dev/null | sed 's/.*\//  /' | sed 's/\.rac\.sql$//;s/\.sql$//';
+      find "$INPUTS_DIR" -mindepth 2 -name 'test.sql' 2>/dev/null | sed "s|$INPUTS_DIR/||;s|/test.sql||;s/^/  /"; } | sort -u >&2
     exit 1
 fi
 
 # ---- Tag filtering ----
-SCENARIO_TAGS=$(grep '^-- @TAG ' "$SCENARIO_SQL" 2>/dev/null | sed 's/^-- @TAG //' || true)
+# Check tags in all scenario SQL files
+TAG_FILES="$SCENARIO_SQL"
+[[ -n "${SETUP_SQL:-}" ]] && TAG_FILES="$SETUP_SQL $SCENARIO_SQL"
+SCENARIO_TAGS=$(grep '^-- @TAG ' $TAG_FILES 2>/dev/null | sed 's/.*-- @TAG //' || true)
 if [[ -n "$SCENARIO_TAGS" ]]; then
     if [[ -z "${INCLUDE_TAGS:-}" ]]; then
         echo "SKIP: $SCENARIO has tags ($SCENARIO_TAGS) but INCLUDE_TAGS not set"
@@ -95,7 +126,7 @@ done
 
 # ---- Setup ----
 FIXTURE_NAME="${SCENARIO}${FIXTURE_SUFFIX}"
-OUTPUT_BASE="${OUTPUT_BASE:-$TESTS_DIR/3-generated}"
+OUTPUT_BASE="${OUTPUT_BASE:-$SQL_DIR/generated}"
 
 # Working directory (under tests/.work/ so it's visible inside OLR containers)
 mkdir -p "$TESTS_DIR/.work"
@@ -104,16 +135,17 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Check for DDL marker
 DDL_MODE=0
-if grep -q '^-- @DDL' "$SCENARIO_SQL" 2>/dev/null; then
+if grep -q '^-- @DDL' $TAG_FILES 2>/dev/null; then
     DDL_MODE=1
 fi
 
 # Check for @MID_SWITCH markers
-MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' "$SCENARIO_SQL" 2>/dev/null || true)
+MID_SWITCH_COUNT=$(grep -c '^-- @MID_SWITCH' $TAG_FILES 2>/dev/null || true)
 
 echo "=== Fixture generation: $SCENARIO (target: $ORACLE_TARGET, driver: $ORACLE_DRIVER) ==="
 echo "  Fixture name: $FIXTURE_NAME"
 echo "  Work dir: $WORK_DIR"
+echo "  Input mode: $SCENARIO_MODE"
 if [[ "$DDL_MODE" -eq 1 ]]; then
     echo "  Mode: DDL (DICT_FROM_REDO_LOGS)"
 fi

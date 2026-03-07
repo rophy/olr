@@ -1,0 +1,2 @@
+INSERT INTO TEST_CDC VALUES (1, 'hello world');
+COMMIT;

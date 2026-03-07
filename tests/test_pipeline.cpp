@@ -85,18 +85,18 @@ namespace {
     }
 
     // Resolve the parent directory for a fixture based on its prefix.
-    // Fixture names are "prebuilt/<scenario>" or "generated/<scenario>".
-    // Returns the base directory (2-prebuilt or 3-generated) under TEST_DATA.
+    // Fixture names are "fixtures/<scenario>" or "generated/<scenario>".
+    // Returns the base directory under TEST_DATA.
     std::pair<std::string, std::string> parseFixtureName(const std::string& name) {
         auto slashPos = name.find('/');
         if (slashPos == std::string::npos)
             return {"", name};
         std::string prefix = name.substr(0, slashPos);
         std::string scenario = name.substr(slashPos + 1);
-        if (prefix == "prebuilt")
-            return {"2-prebuilt", scenario};
+        if (prefix == "fixtures")
+            return {"fixtures", scenario};
         if (prefix == "generated")
-            return {"3-generated", scenario};
+            return {"sql/generated", scenario};
         return {"", name};
     }
 }
@@ -279,8 +279,8 @@ protected:
 };
 
 // --- Auto-discovered parameterized fixtures ---
-// Discovers fixture names from both 2-prebuilt/ and 3-generated/ directories.
-// Each fixture is prefixed with its source: "prebuilt/<scenario>" or "generated/<scenario>".
+// Discovers fixture names from both fixtures/ and sql/generated/ directories.
+// Each fixture is prefixed with its source: "fixtures/<scenario>" or "generated/<scenario>".
 
 namespace {
     void scanFixtureDir(const std::string& baseDir, const std::string& prefix, std::vector<std::string>& fixtures) {
@@ -299,8 +299,8 @@ namespace {
 
     std::vector<std::string> discoverFixtures() {
         std::vector<std::string> fixtures;
-        scanFixtureDir("2-prebuilt", "prebuilt", fixtures);
-        scanFixtureDir("3-generated", "generated", fixtures);
+        scanFixtureDir("fixtures", "fixtures", fixtures);
+        scanFixtureDir("sql/generated", "generated", fixtures);
         std::sort(fixtures.begin(), fixtures.end());
         return fixtures;
     }

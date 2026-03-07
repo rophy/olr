@@ -15,7 +15,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SQL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TESTS_DIR="$(cd "$SQL_DIR/.." && pwd)"
 DEBEZIUM_DIR="$TESTS_DIR/debezium"
 
 SCENARIO="${1:?Usage: $0 <scenario-name>}"
@@ -26,9 +27,9 @@ DB_CONN="${DB_CONN:-olr_test/olr_test@//localhost:1521/XEPDB1}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-120}"
 
 # Find scenario SQL
-SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.sql"
+SCENARIO_SQL="$SQL_DIR/inputs/${SCENARIO}.sql"
 if [[ ! -f "$SCENARIO_SQL" ]]; then
-    SCENARIO_SQL="$TESTS_DIR/0-inputs/${SCENARIO}.rac.sql"
+    SCENARIO_SQL="$SQL_DIR/inputs/${SCENARIO}.rac.sql"
 fi
 if [[ ! -f "$SCENARIO_SQL" ]]; then
     echo "ERROR: Scenario file not found: $SCENARIO" >&2

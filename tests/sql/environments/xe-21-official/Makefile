@@ -1,7 +1,10 @@
 ORACLE_TARGET := xe-21-official
-TESTS_DIR := $(abspath ../..)
-SCRIPTS_DIR := $(TESTS_DIR)/scripts
-SCENARIOS := $(wildcard $(TESTS_DIR)/0-inputs/*.sql)
+SQL_DIR := $(abspath ../..)
+SCRIPTS_DIR := $(SQL_DIR)/scripts
+INPUTS_DIR := $(SQL_DIR)/inputs
+SCENARIOS := $(sort \
+    $(patsubst $(INPUTS_DIR)/%.sql,%,$(wildcard $(INPUTS_DIR)/*.sql)) \
+    $(patsubst $(INPUTS_DIR)/%/test.sql,%,$(wildcard $(INPUTS_DIR)/*/test.sql)))
 SCENARIO ?=
 
 export DB_CONN := olr_test/olr_test@//localhost:1521/XEPDB1
@@ -20,8 +23,7 @@ test-sql:
 ifdef SCENARIO
 	ORACLE_TARGET=$(ORACLE_TARGET) $(SCRIPTS_DIR)/generate.sh $(SCENARIO)
 else
-	@for sql in $(SCENARIOS); do \
-		name=$$(basename "$$sql" .sql); \
+	@for name in $(SCENARIOS); do \
 		echo "=== Generating: $$name ==="; \
 		ORACLE_TARGET=$(ORACLE_TARGET) $(SCRIPTS_DIR)/generate.sh "$$name" || exit 1; \
 	done

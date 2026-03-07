@@ -81,6 +81,37 @@ DICTSCN
 stage_run_scenario() {
     echo "--- Stage 1: Running SQL scenario ---"
 
+    if [[ "$SCENARIO_MODE" == "split" ]]; then
+        _run_scenario_split
+    else
+        _run_scenario_single
+    fi
+
+    # Force log switches
+    echo "  Forcing log switches..."
+    cat > "$WORK_DIR/log_switch.sql" <<LOGSQL
+SET FEEDBACK OFF
+$SWITCH_LOGFILE_SQL;
+$SWITCH_LOGFILE_SQL;
+BEGIN DBMS_SESSION.SLEEP(3); END;
+/
+EXIT
+LOGSQL
+    _exec_sysdba "$WORK_DIR/log_switch.sql" > /dev/null
+
+    # Get end SCN
+    cat > "$WORK_DIR/get_scn.sql" <<'SCNSQL'
+SET HEADING OFF FEEDBACK OFF PAGESIZE 0
+SELECT current_scn FROM v$database;
+EXIT
+SCNSQL
+    END_SCN=$(_exec_sysdba "$WORK_DIR/get_scn.sql" | tr -d '[:space:]')
+
+    echo "  SCN range: $START_SCN - $END_SCN"
+}
+
+# Single-file mode: run the .sql as-is, parse FIXTURE_SCN_START from output
+_run_scenario_single() {
     if [[ "$MID_SWITCH_COUNT" -gt 0 ]]; then
         echo "  Detected $MID_SWITCH_COUNT @MID_SWITCH marker(s) — running DML in background"
         _exec_user "$SCENARIO_SQL" > "$WORK_DIR/dml_output.txt" 2>&1 &
@@ -108,28 +139,57 @@ MIDSQL
         echo "ERROR: Could not find FIXTURE_SCN_START in scenario output" >&2
         exit 1
     fi
+}
 
-    # Force log switches
-    echo "  Forcing log switches..."
-    cat > "$WORK_DIR/log_switch.sql" <<LOGSQL
+# Split mode: run setup.sql, log switch, capture SCN, run test.sql
+_run_scenario_split() {
+    # Run setup.sql if present
+    if [[ -n "${SETUP_SQL:-}" ]]; then
+        # Wrap setup.sql with SQL*Plus settings and EXIT
+        cat > "$WORK_DIR/setup_wrapped.sql" <<'HEADER'
+SET FEEDBACK OFF
+SET ECHO OFF
+HEADER
+        cat "$SETUP_SQL" >> "$WORK_DIR/setup_wrapped.sql"
+        echo "" >> "$WORK_DIR/setup_wrapped.sql"
+        echo "EXIT" >> "$WORK_DIR/setup_wrapped.sql"
+
+        echo "  Running setup.sql..."
+        _exec_user "$WORK_DIR/setup_wrapped.sql" > /dev/null
+
+        # Log switch to push setup DDL out of redo
+        echo "  Log switch after setup..."
+        cat > "$WORK_DIR/setup_switch.sql" <<SWSQL
 SET FEEDBACK OFF
 $SWITCH_LOGFILE_SQL;
-$SWITCH_LOGFILE_SQL;
-BEGIN DBMS_SESSION.SLEEP(3); END;
+BEGIN DBMS_SESSION.SLEEP(1); END;
 /
 EXIT
-LOGSQL
-    _exec_sysdba "$WORK_DIR/log_switch.sql" > /dev/null
+SWSQL
+        _exec_sysdba "$WORK_DIR/setup_switch.sql" > /dev/null
+    fi
 
-    # Get end SCN
-    cat > "$WORK_DIR/get_scn.sql" <<'SCNSQL'
+    # Capture start SCN
+    cat > "$WORK_DIR/get_start_scn.sql" <<'SCNSQL'
 SET HEADING OFF FEEDBACK OFF PAGESIZE 0
 SELECT current_scn FROM v$database;
 EXIT
 SCNSQL
-    END_SCN=$(_exec_sysdba "$WORK_DIR/get_scn.sql" | tr -d '[:space:]')
+    START_SCN=$(_exec_sysdba "$WORK_DIR/get_start_scn.sql" | tr -d '[:space:]')
+    echo "  FIXTURE_SCN_START: $START_SCN"
 
-    echo "  SCN range: $START_SCN - $END_SCN"
+    # Wrap test.sql with SQL*Plus settings and EXIT
+    cat > "$WORK_DIR/test_wrapped.sql" <<'HEADER'
+SET FEEDBACK OFF
+SET ECHO OFF
+HEADER
+    cat "$SCENARIO_SQL" >> "$WORK_DIR/test_wrapped.sql"
+    echo "" >> "$WORK_DIR/test_wrapped.sql"
+    echo "EXIT" >> "$WORK_DIR/test_wrapped.sql"
+
+    # Run test.sql
+    echo "  Running test.sql..."
+    _exec_user "$WORK_DIR/test_wrapped.sql" > /dev/null
 }
 
 # ---- Stage 2: Capture archived redo logs ----

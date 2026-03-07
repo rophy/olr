@@ -53,7 +53,7 @@ jobs:
         with:
           workflow: sql-tests-free23.yaml
           name: test-artifacts-free-23
-          path: tests/3-generated/
+          path: tests/sql/generated/
           if_no_artifact_found: warn
 
       - name: Download fixtures from sql-tests-xe21
@@ -61,7 +61,7 @@ jobs:
         with:
           workflow: sql-tests-xe21.yaml
           name: test-artifacts-xe-21
-          path: tests/3-generated/
+          path: tests/sql/generated/
           if_no_artifact_found: warn
 
       - name: Run redo log tests

@@ -28,4 +28,4 @@ test-redo:
 		-c "ctest --test-dir $(OLR_BUILD_DIR) --output-on-failure"
 
 clean:
-	rm -rf tests/3-generated tests/.work
+	rm -rf tests/sql/generated tests/.work

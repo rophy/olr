@@ -5,7 +5,7 @@ cmake-build-*/
 *.swp
 *~
 .DS_Store
-tests/3-generated/
+tests/sql/generated/
 tests/.work/
 
 # Dynamic assets (VM images, SSH keys, container tarballs)
