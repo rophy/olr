@@ -11,7 +11,6 @@ make build
 # Or manually
 DOCKER_BUILDKIT=1 docker build -f Dockerfile.dev \
   --build-arg GIDOLR=$(id -g) --build-arg UIDOLR=$(id -u) \
-  --build-arg WITHTESTS=1 \
   -t olr-dev:latest .
 ```
 
@@ -21,8 +20,6 @@ BuildKit cache mounts. Only the OLR compilation layer rebuilds on source changes
 
 ## Tests
 
-Tests use Google Test, fetched automatically via CMake FetchContent.
-
 ```bash
 # Run redo log regression tests (no Oracle needed)
 make test-redo
@@ -31,10 +28,14 @@ make test-redo
 make -C tests/sql/environments/free-23 up
 make -C tests/sql/environments/free-23 test-sql
 make -C tests/sql/environments/free-23 down
+
+# Archive generated fixtures for committing
+make fixtures
 ```
 
-Pipeline tests run OLR in batch mode against captured redo log fixtures and
-compare JSON output against golden files.
+Redo log tests run OLR in batch mode against captured redo log fixtures
+(compressed as `tests/fixtures/*.tar.gz`, extracted on demand) and compare
+JSON output against golden files.
 
 To generate fixtures, use `tests/sql/scripts/generate.sh` which runs SQL
 scenarios against Oracle, captures redo logs, validates OLR output against
