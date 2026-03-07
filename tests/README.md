@@ -23,10 +23,8 @@ make test-redo
 # Filter by pytest markers
 make test-redo PYTEST_ARGS="-m 'not rac'"
 
-# Generate fixtures for a specific Oracle environment
-make -C tests/sql/environments/free-23 up
-make -C tests/sql/environments/free-23 test-sql
-make -C tests/sql/environments/free-23 down
+# Generate fixtures (starts/stops Oracle containers automatically)
+cd tests && pytest test_generate.py -v --oracle-env=free-23
 
 # Archive generated fixtures for committing
 make fixtures
@@ -56,26 +54,27 @@ pytest test_fixtures.py -m "not ddl"     # skip DDL scenarios
 pytest test_fixtures.py -m "us7ascii"    # only us7ascii scenarios
 ```
 
-### Fixture Generation (`make test-sql`)
+### Fixture Generation (`test_generate.py`)
 
-Runs pytest with `test_generate.py`, which parametrizes over all SQL scenarios
-and calls `generate.sh` per scenario. Each environment Makefile sets the
-Oracle target and connection details:
+Runs `generate.sh` per scenario against a live Oracle instance. The session
+fixture automatically starts/stops containers via `docker compose` (or custom
+`up.sh`/`down.sh` scripts for non-Docker environments like RAC).
+
+Environment-specific settings (`DB_CONN`, `PDB_NAME`, `INCLUDE_TAGS`) are
+loaded from `sql/environments/<env>/.env` if present.
 
 ```bash
 # Generate all fixtures for Oracle Free 23
-make -C tests/sql/environments/free-23 up
-make -C tests/sql/environments/free-23 test-sql
-make -C tests/sql/environments/free-23 down
+cd tests && pytest test_generate.py -v --oracle-env=free-23
 
 # Run a single scenario
-make -C tests/sql/environments/free-23 test-sql PYTEST_ARGS="-k basic-crud"
+cd tests && pytest test_generate.py -v --oracle-env=free-23 -k basic-crud
 
 # Skip DDL scenarios
-make -C tests/sql/environments/free-23 test-sql PYTEST_ARGS="-m 'not ddl'"
+cd tests && pytest test_generate.py -v --oracle-env=free-23 -m "not ddl"
 
-# Or run pytest directly
-cd tests && pytest test_generate.py -v --oracle-env=free-23 -k basic-crud
+# Use RAC driver
+cd tests && pytest test_generate.py -v --oracle-env=rac --oracle-driver=rac
 ```
 
 The `sql/scripts/generate.sh` script runs 7 stages per scenario:
@@ -102,7 +101,8 @@ automatically by `make test-redo` via timestamp-based Makefile rules.
 ```
 tests/
   conftest.py                         # Fixture discovery + SQL tag → pytest marker mapping
-  test_fixtures.py                    # Parametrized pytest runner
+  test_fixtures.py                    # Redo log regression tests
+  test_generate.py                    # SQL fixture generation tests
   pytest.ini                          # Marker registration
 
   fixtures/                           # Committed fixtures (tar.gz archives)

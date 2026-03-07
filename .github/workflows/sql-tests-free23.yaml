@@ -53,11 +53,8 @@ jobs:
             WITHPROTOBUF=1
             WITHPROMETHEUS=1
 
-      - name: Start containers
-        run: make -C tests/sql/environments/${{ env.ORACLE_TARGET }} up
-
       - name: Generate all fixtures
-        run: make -C tests/sql/environments/${{ env.ORACLE_TARGET }} test-sql
+        run: cd tests && pytest test_generate.py -v --tb=short --oracle-env=${{ env.ORACLE_TARGET }}
 
       - name: Upload generated fixtures
         uses: actions/upload-artifact@v4
