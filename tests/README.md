@@ -7,29 +7,31 @@ files validated by Oracle LogMiner.
 ## Prerequisites
 
 - Docker with Compose v2
-- Python 3.6+ (stdlib only, no pip dependencies)
-- Bash
+- Python 3.12+ with pytest (`pip install pytest`)
 
 No C++ toolchain needed on the host — OLR is built inside Docker.
 
 ## Quick Start
 
 ```bash
-# Build OLR Docker image (includes binary + gtest)
+# Build OLR Docker image
 make build
 
 # Run regression tests against pre-captured fixtures
 make test-redo
 
+# Filter by pytest markers
+make test-redo PYTEST_ARGS="-m 'not rac'"
+
 # Generate fixtures for a specific Oracle environment
 make -C tests/sql/environments/free-23 up
 make -C tests/sql/environments/free-23 test-sql
+make -C tests/sql/environments/free-23 down
 
-# Generate a single fixture
-make -C tests/sql/environments/free-23 test-sql SCENARIO=basic-crud
+# Archive generated fixtures for committing
+make fixtures
 
 # Cleanup
-make -C tests/sql/environments/free-23 down
 make clean
 ```
 
@@ -37,17 +39,44 @@ make clean
 
 ### Regression Tests (`make test-redo`)
 
-Runs `ctest` inside the `olr-dev` Docker image with the `tests/` directory
-mounted. The C++ test runner (`test_pipeline.cpp`) auto-discovers fixtures from
-two locations:
+Runs pytest on the host, which auto-discovers fixtures from two locations:
 
-- `tests/fixtures/expected/*/output.json` — committed golden files
-- `tests/sql/generated/expected/*/output.json` — locally generated fixtures
+- `tests/fixtures/<scenario>/expected/output.json` — committed fixtures (extracted from `.tar.gz`)
+- `tests/sql/generated/<scenario>/expected/output.json` — locally generated fixtures
 
-For each fixture it builds a batch-mode OLR config, runs OLR, and compares
-output line-by-line against the golden file. No Oracle instance needed.
+For each fixture, pytest builds a batch-mode OLR config, runs OLR via
+`docker run`, and compares output against the golden file. No Oracle needed.
+
+Tags from SQL input files (`-- @DDL`, `-- @TAG rac`, etc.) are automatically
+mapped to pytest markers, enabling filtering with `-m`:
+
+```bash
+pytest test_fixtures.py -m "not rac"     # skip RAC scenarios
+pytest test_fixtures.py -m "not ddl"     # skip DDL scenarios
+pytest test_fixtures.py -m "us7ascii"    # only us7ascii scenarios
+```
 
 ### Fixture Generation (`make test-sql`)
+
+Runs pytest with `test_generate.py`, which parametrizes over all SQL scenarios
+and calls `generate.sh` per scenario. Each environment Makefile sets the
+Oracle target and connection details:
+
+```bash
+# Generate all fixtures for Oracle Free 23
+make -C tests/sql/environments/free-23 up
+make -C tests/sql/environments/free-23 test-sql
+make -C tests/sql/environments/free-23 down
+
+# Run a single scenario
+make -C tests/sql/environments/free-23 test-sql PYTEST_ARGS="-k basic-crud"
+
+# Skip DDL scenarios
+make -C tests/sql/environments/free-23 test-sql PYTEST_ARGS="-m 'not ddl'"
+
+# Or run pytest directly
+cd tests && pytest test_generate.py -v --oracle-env=free-23 -k basic-crud
+```
 
 The `sql/scripts/generate.sh` script runs 7 stages per scenario:
 
@@ -62,43 +91,49 @@ The `sql/scripts/generate.sh` script runs 7 stages per scenario:
 | 6 | Compare OLR output vs LogMiner — **fail if mismatch** |
 | 7 | Save OLR output as golden file to `sql/generated/` |
 
+### Fixture Archiving (`make fixtures`)
+
+Compresses each fixture in `sql/generated/` into `fixtures/<scenario>.tar.gz`
+for committing. Archives are tracked by git-lfs. Extraction is handled
+automatically by `make test-redo` via timestamp-based Makefile rules.
+
 ## Directory Structure
 
 ```
 tests/
-  CMakeLists.txt                    # gtest build config
-  test_pipeline.cpp                 # Parameterized gtest runner
-  README.md
+  conftest.py                         # Fixture discovery + SQL tag → pytest marker mapping
+  test_fixtures.py                    # Parametrized pytest runner
+  pytest.ini                          # Marker registration
 
-  fixtures/                         # Committed golden fixtures (self-contained, no Oracle needed)
-    expected/<scenario>/output.json
-    schema/<scenario>/TEST-chkpt-<scn>.json
-    redo/<scenario>/*.dbf
+  fixtures/                           # Committed fixtures (tar.gz archives)
+    <scenario>.tar.gz                 # Compressed fixture (git-lfs)
+    <scenario>/                       # Extracted (gitignored)
+      redo/*.dbf
+      schema/TEST-chkpt-<scn>.json
+      expected/output.json
 
-  sql/                              # SQL test infrastructure (requires live Oracle)
-    inputs/                         # SQL scenarios
-      basic-crud.sql                # Single-file format
-      example/                      # Split format (setup.sql + test.sql)
+  sql/                                # SQL test infrastructure (requires live Oracle)
+    inputs/                           # SQL scenarios
+      basic-crud.sql                  # Single-file format
+      example/                        # Split format (setup.sql + test.sql)
         setup.sql
         test.sql
-    environments/                   # Oracle container environments
-      free-23/                      # Oracle Free 23c
-      xe-21/                        # Oracle XE 21c
-      xe-21-official/               # Oracle XE 21c (official image, supports charset)
+    environments/                     # Oracle container environments
+      free-23/                        # Oracle Free 23c
+      xe-21/                          # Oracle XE 21c
+      xe-21-official/                 # Oracle XE 21c (official image)
     scripts/
-      generate.sh                   # Generate + validate one fixture (all topologies)
-      compare.py                    # OLR vs LogMiner comparison
-      logminer2json.py              # LogMiner spool → JSON converter
+      generate.sh                     # Generate + validate one fixture
+      compare.py                      # OLR vs LogMiner comparison
+      logminer2json.py                # LogMiner spool → JSON converter
       drivers/
-        base.sh                     # Base driver: stage functions + primitive stubs
-        docker.sh                   # Default: docker exec + compose exec
-        local.sh                    # Local Oracle + local OLR binary
-        rac.sh                      # RAC: SSH + podman exec to RAC VM
-      oracle-init/
-        01-setup.sh                 # Enables archivelog + supplemental logging
-    generated/                      # Locally generated fixtures (gitignored)
+        base.sh                       # Base driver: stage functions + primitive stubs
+        docker.sh                     # Default: docker exec + compose exec
+        local.sh                      # Local Oracle + local OLR binary
+        rac.sh                        # RAC: SSH + podman exec to RAC VM
+    generated/                        # Locally generated fixtures (gitignored)
 
-  .work/                            # Temporary generation working dirs (gitignored)
+  debezium/                           # Debezium twin-test (OLR vs LogMiner adapters)
 ```
 
 ## Input Formats
@@ -122,64 +157,17 @@ ideal for fixtures committed to version control.
 **Conflict check:** Having both `inputs/example.sql` and `inputs/example/`
 is an error.
 
-## Writing New Scenarios
-
-### Single-file format
-
-Create a SQL file in `sql/inputs/` that:
-
-1. Creates test table(s) with supplemental logging
-2. Records start SCN via `DBMS_OUTPUT.PUT_LINE('FIXTURE_SCN_START: ' || scn)`
-3. Performs DML operations with explicit COMMITs
-4. Ends with `EXIT`
-
-See `sql/inputs/basic-crud.sql` for the template.
-
-### Split format
-
-Create a directory in `sql/inputs/` with:
-
-- `setup.sql` — table creation, supplemental logging (optional)
-- `test.sql` — DML only
-
-See `sql/inputs/example/` for a minimal example.
-
-**Note:** Log switches are handled by `generate.sh` — don't add
-`ALTER SYSTEM SWITCH LOGFILE` to scenario SQL.
-
-### Scenario Annotations
+## Scenario Annotations
 
 Annotations are comments in scenario SQL files that modify generation behaviour:
 
 | Annotation | Effect |
 |------------|--------|
 | `-- @DDL` | Switches LogMiner to `DICT_FROM_REDO_LOGS + DDL_DICT_TRACKING` so schema changes are tracked inline |
-| `-- @MID_SWITCH` | Triggers a log switch mid-execution (one per marker). Use with `DBMS_SESSION.SLEEP()` at that point. |
-| `-- @TAG <name>` | Marks the scenario as opt-in. Skipped unless `INCLUDE_TAGS=<name>` is set. |
+| `-- @MID_SWITCH` | Triggers a log switch mid-execution (one per marker) |
+| `-- @TAG <name>` | Marks the scenario as opt-in. Skipped unless `INCLUDE_TAGS=<name>` is set |
 
-**Tag filtering:**
-
-```bash
-# Only run scenarios tagged "us7ascii"
-INCLUDE_TAGS=us7ascii make -C tests/sql/environments/xe-21-official test-sql
-
-# Run all scenarios except those tagged "slow"
-EXCLUDE_TAGS=slow make -C tests/sql/environments/free-23 test-sql
-```
-
-### DDL Scenarios
-
-Add `-- @DDL` at the top. See `sql/inputs/ddl-add-column.sql` for an example.
-
-### Long-Spanning Transactions
-
-Add `-- @MID_SWITCH` markers where log switches should occur during execution.
-See `sql/inputs/long-spanning-txn.sql` for an example.
-
-### RAC Scenarios
-
-RAC multi-thread scenarios use `.rac.sql` files with a block-based format.
-Generate with `ORACLE_DRIVER=rac` against a live Oracle RAC VM.
+Tags are also mapped to pytest markers for `make test-redo` filtering.
 
 ## Oracle Drivers
 
@@ -201,18 +189,4 @@ fixtures with LogMiner validation, uploads as artifact (90-day retention).
 ### `redo-log-tests.yaml`
 
 Triggered on push/PR to master. Builds the OLR image, downloads the latest
-fixture artifacts from the SQL test workflows, and runs `ctest` inside Docker.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ORACLE_DRIVER` | `docker` | Driver to use: `docker`, `local`, or `rac` |
-| `ORACLE_TARGET` | `free-23` | Environment name (matches `sql/environments/` subdir) |
-| `ORACLE_CONTAINER` | `oracle` | Docker container name for Oracle (docker driver) |
-| `DB_CONN` | `olr_test/olr_test@//localhost:1521/FREEPDB1` | Test user connect string |
-| `SCHEMA_OWNER` | `OLR_TEST` | Schema owner for LogMiner filter |
-| `PDB_NAME` | `FREEPDB1` | PDB name for schema generation |
-| `OUTPUT_BASE` | `tests/sql/generated` | Output directory for generated fixtures |
-| `INCLUDE_TAGS` | — | Space-separated tags; only run matching scenarios |
-| `EXCLUDE_TAGS` | — | Space-separated tags; skip matching scenarios |
+fixture artifacts from the SQL test workflows, and runs pytest on the CI runner.

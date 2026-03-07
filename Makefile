@@ -29,10 +29,7 @@ tests/fixtures/%: tests/fixtures/%.tar.gz
 extract-fixtures: $(FIXTURE_DIRS)
 
 test-redo: extract-fixtures
-	docker run --rm \
-		-v $(CURDIR)/tests:/opt/OpenLogReplicator-local/tests \
-		--entrypoint bash $(OLR_IMAGE) \
-		-c "TESTS_DIR=/opt/OpenLogReplicator-local/tests /opt/OpenLogReplicator-local/tests/run-fixtures.sh"
+	cd tests && OLR_IMAGE=$(OLR_IMAGE) pytest test_fixtures.py -v --tb=short $(PYTEST_ARGS)
 
 fixtures:
 	@for dir in tests/sql/generated/*/; do \

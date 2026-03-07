@@ -7,6 +7,7 @@ cmake-build-*/
 .DS_Store
 tests/sql/generated/
 tests/.work/
+__pycache__/
 
 # Dynamic assets (VM images, SSH keys, container tarballs)
 oracle-rac/assets/

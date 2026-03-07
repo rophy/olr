@@ -22,6 +22,12 @@ jobs:
         with:
           lfs: true
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pytest
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
@@ -65,12 +71,5 @@ jobs:
           path: tests/sql/generated/
           if_no_artifact_found: warn
 
-      - name: Extract fixtures
-        run: make extract-fixtures
-
       - name: Run redo log tests
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/tests:/opt/OpenLogReplicator-local/tests \
-            --entrypoint bash olr-dev:latest \
-            -c "TESTS_DIR=/opt/OpenLogReplicator-local/tests /opt/OpenLogReplicator-local/tests/run-fixtures.sh"
+        run: make test-redo
