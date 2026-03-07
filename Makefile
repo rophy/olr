@@ -5,9 +5,12 @@ BUILD_TYPE ?= Debug
 FIXTURE_ARCHIVES := $(wildcard tests/fixtures/*.tar.gz)
 FIXTURE_DIRS := $(FIXTURE_ARCHIVES:.tar.gz=)
 
-.PHONY: build test-redo extract-fixtures fixtures clean
+.PHONY: help build test-redo extract-fixtures fixtures clean
 
-build:
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build OLR Docker image
 	docker buildx build \
 		--build-arg BUILD_TYPE=$(BUILD_TYPE) \
 		--build-arg UIDOLR=$$(id -u) \
@@ -26,12 +29,12 @@ tests/fixtures/%: tests/fixtures/%.tar.gz
 	tar xzf $< -C tests/fixtures/
 	touch $@
 
-extract-fixtures: $(FIXTURE_DIRS)
+extract-fixtures: $(FIXTURE_DIRS) ## Extract fixture archives
 
-test-redo: extract-fixtures
+test-redo: extract-fixtures ## Run redo log regression tests (no Oracle needed)
 	cd tests && OLR_IMAGE=$(OLR_IMAGE) pytest test_fixtures.py -v --tb=short $(PYTEST_ARGS)
 
-fixtures:
+fixtures: ## Archive generated fixtures as tar.gz for committing
 	@for dir in tests/sql/generated/*/; do \
 		[ -d "$$dir" ] || continue; \
 		name=$$(basename "$$dir"); \
@@ -39,5 +42,5 @@ fixtures:
 		tar czf "tests/fixtures/$$name.tar.gz" -C tests/sql/generated "$$name/"; \
 	done
 
-clean:
+clean: ## Remove generated fixtures and working directories
 	rm -rf tests/sql/generated tests/.work $(FIXTURE_DIRS)
