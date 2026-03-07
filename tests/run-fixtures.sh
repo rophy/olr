@@ -36,10 +36,10 @@ fi
 # --- Discover fixtures ---
 discover_fixtures() {
     local base_dir="$1" # e.g., fixtures or sql/generated
-    local dir="$TESTS_DIR/$base_dir/expected"
+    local dir="$TESTS_DIR/$base_dir"
     [[ -d "$dir" ]] || return 0
     for scenario_dir in "$dir"/*/; do
-        [[ -f "${scenario_dir}output.json" ]] || continue
+        [[ -f "${scenario_dir}expected/output.json" ]] || continue
         echo "$base_dir/$(basename "$scenario_dir")"
     done
 }
@@ -111,9 +111,9 @@ run_fixture() {
         *) echo "FAIL  $fixture (unknown prefix: $dir_prefix)"; return 1 ;;
     esac
 
-    local redo_dir="$TESTS_DIR/$dir_prefix/redo/$scenario"
-    local schema_dir="$TESTS_DIR/$dir_prefix/schema/$scenario"
-    local expected="$TESTS_DIR/$dir_prefix/expected/$scenario/output.json"
+    local redo_dir="$TESTS_DIR/$dir_prefix/$scenario/redo"
+    local schema_dir="$TESTS_DIR/$dir_prefix/$scenario/schema"
+    local expected="$TESTS_DIR/$dir_prefix/$scenario/expected/output.json"
 
     if [[ ! -d "$redo_dir" ]]; then
         echo "FAIL  $fixture (redo logs missing: $redo_dir)"

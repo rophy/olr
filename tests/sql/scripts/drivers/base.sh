@@ -196,7 +196,7 @@ HEADER
 stage_capture_archives() {
     echo ""
     echo "--- Stage 2: Capturing archived redo logs ---"
-    REDO_DIR="$OUTPUT_BASE/redo/$FIXTURE_NAME"
+    REDO_DIR="$OUTPUT_BASE/$FIXTURE_NAME/redo"
     rm -rf "$REDO_DIR"
     mkdir -p "$REDO_DIR"
 
@@ -274,7 +274,7 @@ SQL
 stage_generate_schema() {
     echo ""
     echo "--- Stage 3: Schema generation ---"
-    SCHEMA_DIR="$OUTPUT_BASE/schema/$FIXTURE_NAME"
+    SCHEMA_DIR="$OUTPUT_BASE/$FIXTURE_NAME/schema"
     rm -rf "$SCHEMA_DIR"
     mkdir -p "$SCHEMA_DIR"
 

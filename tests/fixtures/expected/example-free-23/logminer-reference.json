@@ -1,1 +1,0 @@
-{"after": {"ID": "1", "NAME": "hello world"}, "op": "INSERT", "owner": "OLR_TEST", "scn": "2267707", "table": "TEST_CDC", "xid": "0A000C003C020000"}

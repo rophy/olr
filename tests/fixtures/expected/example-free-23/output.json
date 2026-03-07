@@ -1,3 +1,0 @@
-{"scns":"0x0000000000229a3b","tms":"1772847880","c_scn":2267707,"c_idx":1,"xid":"10.12.572","payload":[{"op":"begin"}]}
-{"c_scn":2267707,"c_idx":2,"xid":"10.12.572","payload":[{"op":"c","schema":{"owner":"OLR_TEST","table":"TEST_CDC"},"after":{"ID":1,"NAME":"hello world"}}]}
-{"c_scn":2267707,"c_idx":3,"xid":"10.12.572","payload":[{"op":"commit"}]}

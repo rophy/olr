@@ -63,6 +63,9 @@ jobs:
           path: tests/sql/generated/
           if_no_artifact_found: warn
 
+      - name: Extract fixtures
+        run: make extract-fixtures
+
       - name: Run redo log tests
         run: |
           docker run --rm \

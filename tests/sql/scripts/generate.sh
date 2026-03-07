@@ -186,7 +186,7 @@ fi
 echo ""
 if [[ $COMPARE_RESULT -eq 0 ]]; then
     echo "--- Stage 7: Saving golden file ---"
-    EXPECTED_DIR="$OUTPUT_BASE/expected/$FIXTURE_NAME"
+    EXPECTED_DIR="$OUTPUT_BASE/$FIXTURE_NAME/expected"
     mkdir -p "$EXPECTED_DIR"
     cp "$OLR_OUTPUT" "$EXPECTED_DIR/output.json"
     echo "  Golden file saved: $EXPECTED_DIR/output.json"

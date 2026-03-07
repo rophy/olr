@@ -2,7 +2,10 @@ OLR_IMAGE ?= olr-dev:latest
 CACHE_IMAGE ?= ghcr.io/bersler/openlogreplicator:ci
 BUILD_TYPE ?= Debug
 
-.PHONY: build test-redo clean
+FIXTURE_ARCHIVES := $(wildcard tests/fixtures/*.tar.gz)
+FIXTURE_DIRS := $(FIXTURE_ARCHIVES:.tar.gz=)
+
+.PHONY: build test-redo extract-fixtures fixtures clean
 
 build:
 	docker buildx build \
@@ -19,11 +22,25 @@ build:
 		--load \
 		-f Dockerfile.dev .
 
-test-redo:
+tests/fixtures/%: tests/fixtures/%.tar.gz
+	tar xzf $< -C tests/fixtures/
+	touch $@
+
+extract-fixtures: $(FIXTURE_DIRS)
+
+test-redo: extract-fixtures
 	docker run --rm \
 		-v $(CURDIR)/tests:/opt/OpenLogReplicator-local/tests \
 		--entrypoint bash $(OLR_IMAGE) \
 		-c "TESTS_DIR=/opt/OpenLogReplicator-local/tests /opt/OpenLogReplicator-local/tests/run-fixtures.sh"
 
+fixtures:
+	@for dir in tests/sql/generated/*/; do \
+		[ -d "$$dir" ] || continue; \
+		name=$$(basename "$$dir"); \
+		echo "Archiving $$name..."; \
+		tar czf "tests/fixtures/$$name.tar.gz" -C tests/sql/generated "$$name/"; \
+	done
+
 clean:
-	rm -rf tests/sql/generated tests/.work
+	rm -rf tests/sql/generated tests/.work $(FIXTURE_DIRS)
