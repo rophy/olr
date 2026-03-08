@@ -17,6 +17,8 @@ You should have received a copy of the GNU General Public License
 along with OpenLogReplicator; see the file LICENSE;  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#include <cmath>
+
 #include "../common/DbTable.h"
 #include "../common/types/RowId.h"
 #include "../metadata/Metadata.h"
@@ -35,7 +37,10 @@ namespace OpenLogReplicator {
 
         std::ostringstream ss;
         ss << std::setprecision(9) << value;
-        append(ss.str());
+        std::string str = ss.str();
+        if (std::isfinite(value) && str.find('.') == std::string::npos && str.find('e') == std::string::npos)
+            str += ".0";
+        append(str);
     }
 
     void BuilderJson::columnDouble(const std::string& columnName, long double value) {
@@ -46,7 +51,10 @@ namespace OpenLogReplicator {
 
         std::ostringstream ss;
         ss << std::setprecision(17) << value;
-        append(ss.str());
+        std::string str = ss.str();
+        if (std::isfinite(value) && str.find('.') == std::string::npos && str.find('e') == std::string::npos)
+            str += ".0";
+        append(str);
     }
 
     void BuilderJson::columnString(const std::string& columnName) {
