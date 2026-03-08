@@ -127,6 +127,7 @@ def build_config(tmp_dir, redo_dir, schema_dir, base_dir, fixture_name):
                     "timestamp": 7,
                     "timestamp-metadata": 7,
                     "xid": 1,
+                    "json-number-type": 1,
                 },
                 **source_extra,
             }
