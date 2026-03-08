@@ -84,7 +84,15 @@ def parse_value_list(s):
                 else:
                     val.append(s[j])
                     j += 1
-            values.append("".join(val))
+            token = "".join(val)
+            # Normalize Oracle's non-standard IEEE 754 names to standard forms
+            if token == 'Nan':
+                token = 'NaN'
+            elif token == 'Inf':
+                token = 'Infinity'
+            elif token == '-Inf':
+                token = '-Infinity'
+            values.append(token)
             i = j
         elif s[i:i+4].upper() == 'NULL':
             values.append(None)

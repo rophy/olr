@@ -470,7 +470,8 @@ stage_run_olr() {
         "scn": 1,
         "timestamp": 7,
         "timestamp-metadata": 7,
-        "xid": 1
+        "xid": 1,
+        "json-number-type": 1
       },
       "filter": {
         "table": [
