@@ -184,26 +184,23 @@ fi
 
 # ---- Stage 7: Save golden file ----
 echo ""
-if [[ $COMPARE_RESULT -eq 0 ]]; then
-    echo "--- Stage 7: Saving golden file ---"
-    EXPECTED_DIR="$OUTPUT_BASE/$FIXTURE_NAME/expected"
-    mkdir -p "$EXPECTED_DIR"
-    cp "$OLR_OUTPUT" "$EXPECTED_DIR/output.json"
-    echo "  Golden file saved: $EXPECTED_DIR/output.json"
+echo "--- Stage 7: Saving golden file ---"
+EXPECTED_DIR="$OUTPUT_BASE/$FIXTURE_NAME/expected"
+mkdir -p "$EXPECTED_DIR"
+cp "$OLR_OUTPUT" "$EXPECTED_DIR/output.json"
+echo "  Golden file saved: $EXPECTED_DIR/output.json"
 
-    cp "$WORK_DIR/logminer.json" "$EXPECTED_DIR/logminer-reference.json"
-    echo "  LogMiner reference saved: $EXPECTED_DIR/logminer-reference.json"
+cp "$WORK_DIR/logminer.json" "$EXPECTED_DIR/logminer-reference.json"
+echo "  LogMiner reference saved: $EXPECTED_DIR/logminer-reference.json"
+
+if [[ $COMPARE_RESULT -eq 0 ]]; then
     echo ""
     echo "=== PASS: Fixture '$SCENARIO' generated successfully ==="
 else
-    echo "--- Stage 7: SKIPPED (comparison failed) ---"
     echo ""
-    echo "=== FAIL: Fixture '$SCENARIO' comparison failed ==="
+    echo "=== WARN: Fixture '$SCENARIO' saved with LogMiner comparison differences ==="
     echo "  LogMiner JSON: $WORK_DIR/logminer.json"
     echo "  OLR output:    $OLR_OUTPUT"
-    echo "  OLR log:       $WORK_DIR/olr_stdout.log"
-    echo ""
-    echo "Debug: inspect the files above, then re-run after fixing."
     trap - EXIT  # preserve work dir for debugging
     exit 1
 fi

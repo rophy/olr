@@ -1,2 +1,6 @@
 # Extracted fixture directories (generated from *.tar.gz)
 */
+
+# Generated fixture archives (only example-* are version controlled)
+*.tar.gz
+!example-*.tar.gz
