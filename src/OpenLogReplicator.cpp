@@ -651,6 +651,7 @@ namespace OpenLogReplicator {
                     "flush-buffer",
                     "interval-dts",
                     "interval-ytm",
+                    "json-number-type",
                     "message",
                     "rid",
                     "redo-thread",
@@ -676,6 +677,7 @@ namespace OpenLogReplicator {
             Format::DB_FORMAT dbFormat = Format::DB_FORMAT::DEFAULT;
             Format::INTERVAL_DTS_FORMAT intervalDtsFormat = Format::INTERVAL_DTS_FORMAT::UNIX_NANO;
             Format::INTERVAL_YTM_FORMAT intervalYtmFormat = Format::INTERVAL_YTM_FORMAT::MONTHS;
+            Format::JSON_NUMBER_TYPE jsonNumberType = Format::JSON_NUMBER_TYPE::AS_NULL;
             Format::MESSAGE_FORMAT messageFormat = Format::MESSAGE_FORMAT::DEFAULT;
             Format::REDO_THREAD_FORMAT redoThreadFormat = Format::REDO_THREAD_FORMAT::SKIP;
             Format::RID_FORMAT ridFormat = Format::RID_FORMAT::SKIP;
@@ -764,6 +766,13 @@ namespace OpenLogReplicator {
                 if (val > 1)
                     throw ConfigurationException(30001, "bad JSON, invalid \"redo-thread\" value: " + std::to_string(val) + ", expected: one of {0 .. 1}");
                 redoThreadFormat = static_cast<Format::REDO_THREAD_FORMAT>(val);
+            }
+
+            if (formatJson.HasMember("json-number-type")) {
+                const uint val = Ctx::getJsonFieldU(configFileName, formatJson, "json-number-type");
+                if (val > 1)
+                    throw ConfigurationException(30001, "bad JSON, invalid \"json-number-type\" value: " + std::to_string(val) + ", expected: one of {0, 1}");
+                jsonNumberType = static_cast<Format::JSON_NUMBER_TYPE>(val);
             }
 
             if (formatJson.HasMember("xid")) {
@@ -882,7 +891,7 @@ namespace OpenLogReplicator {
             Builder* builder;
             Format format(dbFormat, attributesFormat, intervalDtsFormat, intervalYtmFormat, messageFormat, ridFormat, redoThreadFormat, xidFormat,
                 timestampFormat, timestampMetadataFormat, timestampTzFormat, timestampType, charFormat, scnFormat, scnType, unknownFormat,
-                schemaFormat, columnFormat, unknownType, userType, charsetOverrideId);
+                schemaFormat, columnFormat, unknownType, userType, jsonNumberType, charsetOverrideId);
             if (formatType == "json" || formatType == "debezium") {
                 builder = new BuilderJson(ctx, locales, metadata, format, flushBuffer);
             } else if (formatType == "protobuf") {

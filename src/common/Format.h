@@ -73,6 +73,11 @@ namespace OpenLogReplicator {
             STRING_YM_DASH
         };
 
+        enum class JSON_NUMBER_TYPE : unsigned char {
+            AS_NULL   = 0,
+            AS_STRING = 1
+        };
+
         enum class MESSAGE_FORMAT : unsigned char {
             DEFAULT       = 0,
             FULL          = 1 << 0,
@@ -219,6 +224,7 @@ namespace OpenLogReplicator {
         COLUMN_FORMAT columnFormat;
         UNKNOWN_TYPE unknownType;
         USER_TYPE userType;
+        JSON_NUMBER_TYPE jsonNumberType;
         uint64_t charsetOverrideId;
 
         Format(DB_FORMAT newDbFormat, ATTRIBUTES_FORMAT newAttributesFormat, INTERVAL_DTS_FORMAT newIntervalDtsFormat,
@@ -226,7 +232,7 @@ namespace OpenLogReplicator {
                XID_FORMAT newXidFormat, TIMESTAMP_FORMAT newTimestampFormat, TIMESTAMP_FORMAT newTimestampMetadataFormat,
                TIMESTAMP_TZ_FORMAT newTimestampTzFormat, TIMESTAMP_TYPE newTimestampType, CHAR_FORMAT newCharFormat, SCN_FORMAT newScnFormat,
                SCN_TYPE newScnType, UNKNOWN_FORMAT newUnknownFormat, SCHEMA_FORMAT newSchemaFormat, COLUMN_FORMAT newColumnFormat, UNKNOWN_TYPE newUnknownType,
-               USER_TYPE newUserType, uint64_t newCharsetOverrideId = 0):
+               USER_TYPE newUserType, JSON_NUMBER_TYPE newJsonNumberType = JSON_NUMBER_TYPE::AS_NULL, uint64_t newCharsetOverrideId = 0):
                 dbFormat(newDbFormat),
                 attributesFormat(newAttributesFormat),
                 intervalDtsFormat(newIntervalDtsFormat),
@@ -247,6 +253,7 @@ namespace OpenLogReplicator {
                 columnFormat(newColumnFormat),
                 unknownType(newUnknownType),
                 userType(newUserType),
+                jsonNumberType(newJsonNumberType),
                 charsetOverrideId(newCharsetOverrideId) {}
 
         [[nodiscard]] bool isAttributesFormatBegin() const {
@@ -359,6 +366,10 @@ namespace OpenLogReplicator {
 
         [[nodiscard]] bool isDbFormatAddDdl() const {
             return (static_cast<unsigned char>(dbFormat) & static_cast<unsigned char>(DB_FORMAT::ADD_DDL)) != 0;
+        }
+
+        [[nodiscard]] bool isJsonNumberTypeAsString() const {
+            return jsonNumberType == JSON_NUMBER_TYPE::AS_STRING;
         }
     };
 

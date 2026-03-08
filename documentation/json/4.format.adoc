@@ -129,6 +129,22 @@ Options include raw months, string months, or year/month pair formats.
 * `3` — Value in string format, number of years and months separated by `","` - `"val": "1,8"`.
 * `4` — Value in string format, number of years and months separated by `"-"` - `"val": "1-8"`.
 
+|`json-number-type` [[json-number-type]]
+|_integer_, min: 0, max: 1, default: 0
+|Controls how non-finite IEEE 754 values (`NaN`, `+Infinity`, `-Infinity`) in `BINARY_FLOAT` and `BINARY_DOUBLE` columns are serialized in JSON output.
+The JSON specification does not support these values as numeric literals.
+
+* `0` — emit `null` (default).
+Safe for all JSON consumers.
+Compatible with Debezium LogMiner adapter behavior (Debezium < 3.4).
+* `1` — emit as JSON strings: `"NaN"`, `"Infinity"`, `"-Infinity"`.
+Preserves the original value.
+Compatible with Java `Float.parseFloat()` / `Double.parseDouble()`.
+Use when the consumer can handle string representations of non-finite numbers (e.g., Debezium >= 3.4 with https://issues.redhat.com/browse/DBZ-806[DBZ-806]).
+
+_NOTE:_ This option only affects JSON output (`type` = `json` or `debezium`).
+Protobuf output natively supports IEEE 754 special values and is not affected.
+
 |`message` [[message]]
 |_integer_, min: 0, max: 30, default: 0
 |Controls message splitting and auxiliary fields (bitmask):

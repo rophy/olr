@@ -35,10 +35,24 @@ namespace OpenLogReplicator {
         appendEscape(columnName);
         append(std::string_view(R"(":)"));
 
+        if (!std::isfinite(value)) {
+            if (format.isJsonNumberTypeAsString()) {
+                if (std::isnan(value))
+                    append(std::string_view(R"("NaN")"));
+                else if (value < 0)
+                    append(std::string_view(R"("-Infinity")"));
+                else
+                    append(std::string_view(R"("Infinity")"));
+            } else {
+                append(std::string_view("null"));
+            }
+            return;
+        }
+
         std::ostringstream ss;
         ss << std::setprecision(9) << value;
         std::string str = ss.str();
-        if (std::isfinite(value) && str.find('.') == std::string::npos && str.find('e') == std::string::npos)
+        if (str.find('.') == std::string::npos && str.find('e') == std::string::npos)
             str += ".0";
         append(str);
     }
@@ -49,10 +63,24 @@ namespace OpenLogReplicator {
         appendEscape(columnName);
         append(std::string_view(R"(":)"));
 
+        if (!std::isfinite(value)) {
+            if (format.isJsonNumberTypeAsString()) {
+                if (std::isnan(value))
+                    append(std::string_view(R"("NaN")"));
+                else if (value < 0)
+                    append(std::string_view(R"("-Infinity")"));
+                else
+                    append(std::string_view(R"("Infinity")"));
+            } else {
+                append(std::string_view("null"));
+            }
+            return;
+        }
+
         std::ostringstream ss;
         ss << std::setprecision(17) << value;
         std::string str = ss.str();
-        if (std::isfinite(value) && str.find('.') == std::string::npos && str.find('e') == std::string::npos)
+        if (str.find('.') == std::string::npos && str.find('e') == std::string::npos)
             str += ".0";
         append(str);
     }
