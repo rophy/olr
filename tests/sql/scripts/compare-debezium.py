@@ -18,6 +18,18 @@ import sys
 SENTINEL_TABLE = 'DEBEZIUM_SENTINEL'
 OP_MAP = {'c': 'INSERT', 'u': 'UPDATE', 'd': 'DELETE'}
 
+# Debezium's marker for LOB columns it can't provide.
+# CLOB: literal string; BLOB: base64 encoding of the same string.
+UNAVAILABLE_MARKERS = {
+    '__debezium_unavailable_value',
+    'X19kZWJleml1bV91bmF2YWlsYWJsZV92YWx1ZQ==',
+}
+
+
+def is_unavailable(v):
+    """Check if a normalized value is Debezium's unavailable marker."""
+    return v is not None and v in UNAVAILABLE_MARKERS
+
 
 def normalize_value(v):
     """Normalize a value for comparison. None stays None."""
@@ -64,6 +76,85 @@ def parse_debezium_jsonl(path):
     return records
 
 
+def merge_lob_events(records):
+    """Merge LogMiner's split LOB events into single logical events.
+
+    LogMiner splits LOB operations into multiple events:
+      - INSERT with EMPTY_CLOB/EMPTY_BLOB (nulls) + UPDATE with actual LOB values
+      - UPDATE non-LOB columns + UPDATE LOB columns
+    OLR emits these as single merged events. This function merges consecutive
+    events on the same row so the two outputs become comparable.
+    """
+    if not records:
+        return records
+
+    merged = [dict(records[0])]
+    for rec in records[1:]:
+        prev = merged[-1]
+        if _can_merge_lob(prev, rec):
+            merged[-1] = _do_merge(prev, rec)
+        else:
+            merged.append(dict(rec))
+    return merged
+
+
+def _can_merge_lob(prev, curr):
+    """Check if curr is a LOB-split continuation of prev."""
+    if prev['table'] != curr['table']:
+        return False
+    if curr['op'] != 'UPDATE':
+        return False
+    if prev['op'] not in ('INSERT', 'UPDATE'):
+        return False
+    return _same_row(prev.get('after', {}), curr.get('after', {}))
+
+
+def _same_row(a_after, b_after):
+    """Check if two after-images refer to the same row via shared key columns."""
+    matching = 0
+    for k in set(a_after) & set(b_after):
+        va, vb = a_after.get(k), b_after.get(k)
+        if va is None or vb is None:
+            continue
+        if is_unavailable(va) or is_unavailable(vb):
+            continue
+        # Both have real values
+        if va == vb:
+            matching += 1
+        else:
+            return False
+    return matching > 0
+
+
+def _value_priority(v):
+    """Rank value informativeness: real > unavailable > None."""
+    if v is not None and not is_unavailable(v):
+        return 2
+    if is_unavailable(v):
+        return 1
+    return 0
+
+
+def _merge_columns(prev_cols, curr_cols):
+    """Merge column dicts, preferring the most informative value."""
+    merged = dict(prev_cols)
+    for k, v in curr_cols.items():
+        if k not in merged or _value_priority(v) >= _value_priority(merged[k]):
+            merged[k] = v
+    return merged
+
+
+def _do_merge(prev, curr):
+    """Merge curr UPDATE into prev, keeping prev's op type and before."""
+    return {
+        'op': prev['op'],
+        'schema': prev['schema'],
+        'table': prev['table'],
+        'after': _merge_columns(prev.get('after', {}), curr.get('after', {})),
+        'before': prev.get('before', {}),
+    }
+
+
 def values_match(a, b):
     """Compare two normalized values with type tolerance."""
     if a is None and b is None:
@@ -94,6 +185,9 @@ def columns_match(cols_a, cols_b):
         if key not in cols_b or key not in cols_a:
             # One side has extra columns — skip (supplemental logging diffs)
             continue
+        if is_unavailable(va) or is_unavailable(vb):
+            # LOB column where one side can't provide the value — skip
+            continue
         if not values_match(va, vb):
             diffs.append(f"  column {key}: LogMiner={va!r}, OLR={vb!r}")
     return diffs
@@ -113,7 +207,10 @@ def match_score(a, b):
         cb = b.get(section, {})
         common = set(ca.keys()) & set(cb.keys())
         for key in common:
-            if values_match(ca.get(key), cb.get(key)):
+            va, vb = ca.get(key), cb.get(key)
+            if is_unavailable(va) or is_unavailable(vb):
+                continue
+            if values_match(va, vb):
                 matches += 1
             else:
                 mismatches += 1
@@ -194,17 +291,22 @@ def main():
     lm_records = parse_debezium_jsonl(sys.argv[1])
     olr_records = parse_debezium_jsonl(sys.argv[2])
 
-    diffs = compare(lm_records, olr_records)
+    # Merge LogMiner's split LOB events (OLR already emits merged events)
+    lm_merged = merge_lob_events(lm_records)
+    olr_merged = merge_lob_events(olr_records)
+
+    diffs = compare(lm_merged, olr_merged)
 
     if diffs:
         print("MISMATCH: LogMiner vs OLR Debezium output differs:")
         for d in diffs:
             print(d)
-        print(f"\nLogMiner records: {len(lm_records)}")
-        print(f"OLR records: {len(olr_records)}")
+        print(f"\nLogMiner records: {len(lm_merged)} (raw: {len(lm_records)})")
+        print(f"OLR records: {len(olr_merged)} (raw: {len(olr_records)})")
         sys.exit(1)
     else:
-        print(f"MATCH: {len(lm_records)} records verified")
+        print(f"MATCH: {len(lm_merged)} records verified "
+              f"(LogMiner raw: {len(lm_records)}, OLR raw: {len(olr_records)})")
         sys.exit(0)
 
 
