@@ -62,6 +62,7 @@ def parse_logminer_json(path):
                 'table': obj.get('table', ''),
                 'xid': obj.get('xid', ''),
                 'scn': obj.get('scn', ''),
+                'row_id': obj.get('row_id', ''),
                 'before': normalize_columns(obj.get('before')),
                 'after': normalize_columns(obj.get('after')),
             })
@@ -238,22 +239,33 @@ def columns_match(lm_cols, olr_cols, op=None, section=None):
     return diffs
 
 
-def has_empty_lobs(after):
-    """Check if any column value is EMPTY_CLOB() or EMPTY_BLOB()."""
-    if not after:
-        return False
-    return any(v in ('EMPTY_CLOB()', 'EMPTY_BLOB()') for v in after.values() if v)
+NULL_ROW_ID = 'AAAAAAAAAAAAAAAAAA'
+
+
+def _has_null_row_id(record):
+    """Check if a record has a null ROW_ID (all A's, DATA_BLK#=0).
+
+    LogMiner assigns a null ROW_ID to the first half of a LOB-split operation:
+    - INSERT with EMPTY_CLOB()/EMPTY_BLOB() (followed by UPDATE with LOB data)
+    - UPDATE of non-LOB columns (followed by UPDATE with LOB column changes)
+
+    OLR merges these at the redo level using suppLogBdba/suppLogSlot/FB_L,
+    which LogMiner doesn't expose. The null ROW_ID is the LogMiner equivalent.
+    """
+    return record.get('row_id', '') == NULL_ROW_ID
 
 
 def normalize_lob_operations(records):
     """Merge LOB-related record sequences in LogMiner output.
 
-    Oracle splits LOB writes into multiple redo records:
-    A) INSERT with EMPTY_CLOB()/EMPTY_BLOB() + UPDATE with actual values
-    B) UPDATE with EMPTY_CLOB()/EMPTY_BLOB() + UPDATE with actual values
-    C) UPDATE(non-LOB cols) + UPDATE(LOB cols) at same SCN (single SQL split)
+    Oracle splits LOB writes into multiple redo records. LogMiner reports
+    each as a separate row. The first record of a split has a null ROW_ID
+    (AAAAAAAAAAAAAAAAAA); the continuation has a real ROW_ID.
 
-    Merges these into single records to match OLR's coalesced output.
+    This merges consecutive same-XID/table records where the current record
+    has a null ROW_ID and the next is an UPDATE, matching OLR's coalesced
+    output.
+
     After merging, remaining EMPTY_CLOB()/EMPTY_BLOB() values (data too large
     for LogMiner SQL_REDO) are removed from the record.
     """
@@ -266,35 +278,24 @@ def normalize_lob_operations(records):
             'table': records[i]['table'],
             'xid': records[i]['xid'],
             'scn': records[i].get('scn', ''),
+            'row_id': records[i].get('row_id', ''),
             'before': dict(records[i].get('before', {})),
             'after': dict(records[i].get('after', {})),
         }
 
-        while i + 1 < len(records):
+        # Merge consecutive LOB-split records: current has null ROW_ID,
+        # next is an UPDATE in the same XID+table (the LOB data half).
+        while (i + 1 < len(records)
+               and _has_null_row_id(rec)
+               and records[i + 1]['op'] == 'UPDATE'
+               and records[i + 1]['xid'] == rec['xid']
+               and records[i + 1]['table'] == rec['table']):
             nxt = records[i + 1]
-            if nxt['op'] != 'UPDATE' or nxt['xid'] != rec['xid'] or nxt['table'] != rec['table']:
-                break
-
-            # Pattern A/B: current has EMPTY_CLOB/EMPTY_BLOB → next fills them
-            if has_empty_lobs(rec['after']):
-                for col, val in nxt.get('after', {}).items():
-                    rec['after'][col] = val
-                i += 1
-                continue
-
-            # Pattern C: consecutive UPDATEs at same SCN (LOB column split)
-            # Only merge if after dicts have no overlapping keys — Oracle splits
-            # a single UPDATE into non-LOB + LOB parts with disjoint columns.
-            # Overlapping keys means two separate UPDATE statements.
-            nxt_after = nxt.get('after', {})
-            if (rec['op'] == 'UPDATE' and rec.get('scn') and rec['scn'] == nxt.get('scn', '')
-                    and not (set(rec['after']) & set(nxt_after))):
-                for col, val in nxt_after.items():
-                    rec['after'][col] = val
-                i += 1
-                continue
-
-            break
+            for col, val in nxt.get('after', {}).items():
+                rec['after'][col] = val
+            # Take the real ROW_ID from the continuation record
+            rec['row_id'] = nxt.get('row_id', '')
+            i += 1
 
         # Remove EMPTY_CLOB()/EMPTY_BLOB() values that weren't filled
         # (LogMiner couldn't capture the data — too large for SQL_REDO)
