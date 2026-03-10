@@ -201,6 +201,44 @@ _exec_user_on_node() {
 }
 
 stage_run_scenario() {
+    # Regular .sql files run on node 1 using the base stage logic
+    if [[ "$SCENARIO_SQL" != *.rac.sql ]]; then
+        # Use base stage_run_scenario (single/split mode on node 1)
+        echo "--- Stage 1: Running SQL scenario ---"
+
+        if [[ "$SCENARIO_MODE" == "split" ]]; then
+            _run_scenario_split
+        else
+            _run_scenario_single
+        fi
+
+        # Force log switches on ALL instances (extra switches + longer sleep for RAC)
+        echo "  Forcing log switches on all instances..."
+        cat > "$WORK_DIR/log_switch.sql" <<'LOGSQL'
+SET FEEDBACK OFF
+ALTER SYSTEM SWITCH ALL LOGFILE;
+ALTER SYSTEM SWITCH ALL LOGFILE;
+BEGIN DBMS_SESSION.SLEEP(5); END;
+/
+ALTER SYSTEM SWITCH ALL LOGFILE;
+BEGIN DBMS_SESSION.SLEEP(5); END;
+/
+EXIT
+LOGSQL
+        _exec_sysdba "$WORK_DIR/log_switch.sql" > /dev/null
+
+        # Get end SCN after log switches
+        cat > "$WORK_DIR/get_scn.sql" <<'SCNSQL'
+SET HEADING OFF FEEDBACK OFF PAGESIZE 0
+SELECT current_scn FROM v$database;
+EXIT
+SCNSQL
+        END_SCN=$(_exec_sysdba "$WORK_DIR/get_scn.sql" | tr -d '[:space:]')
+
+        echo "  SCN range: $START_SCN - $END_SCN"
+        return
+    fi
+
     echo "--- Stage 1: Running SQL scenario blocks ---"
 
     _parse_rac_blocks "$SCENARIO_SQL"
