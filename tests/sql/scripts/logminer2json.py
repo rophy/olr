@@ -216,11 +216,16 @@ def extract_value(val_str):
 
 def convert_line(line):
     """Convert one pipe-delimited LogMiner line to a dict."""
-    parts = line.split('|', 6)
+    parts = line.split('|', 7)
     if len(parts) < 7:
         return None
 
-    scn, operation, seg_owner, table_name, xid, sql_redo, sql_undo = parts
+    # Support both old (7-field) and new (8-field, with row_id) formats
+    if len(parts) >= 8:
+        scn, operation, seg_owner, table_name, xid, sql_redo, sql_undo, row_id = parts
+    else:
+        scn, operation, seg_owner, table_name, xid, sql_redo, sql_undo = parts
+        row_id = ''
     operation = operation.strip()
     sql_redo = sql_redo.strip()
 
@@ -230,6 +235,7 @@ def convert_line(line):
         "owner": seg_owner.strip(),
         "table": table_name.strip(),
         "xid": xid.strip(),
+        "row_id": row_id.strip(),
     }
 
     if operation == 'INSERT':
@@ -262,21 +268,22 @@ def merge_continuation_lines(lines):
     that doesn't start with an SQL keyword (insert/update/delete).
     """
     merged = []
-    accum = None  # (header_parts[0:5], sql_redo, sql_undo)
+    accum = None  # (header_parts[0:5], sql_redo, sql_undo, row_id)
     for line in lines:
-        parts = line.split('|', 6)
+        parts = line.split('|', 7)
         if len(parts) < 6:
             continue
         sql_redo = parts[5] if len(parts) > 5 else ''
         sql_undo = parts[6] if len(parts) > 6 else ''
+        row_id = parts[7] if len(parts) > 7 else ''
         if accum and not SQL_START_RE.match(sql_redo.strip()):
-            accum = (accum[0], accum[1] + sql_redo, accum[2] + sql_undo)
+            accum = (accum[0], accum[1] + sql_redo, accum[2] + sql_undo, accum[3])
         else:
             if accum:
-                merged.append('|'.join(accum[0]) + '|' + accum[1] + '|' + accum[2])
-            accum = (parts[:5], sql_redo, sql_undo)
+                merged.append('|'.join(accum[0]) + '|' + accum[1] + '|' + accum[2] + '|' + accum[3])
+            accum = (parts[:5], sql_redo, sql_undo, row_id)
     if accum:
-        merged.append('|'.join(accum[0]) + '|' + accum[1] + '|' + accum[2])
+        merged.append('|'.join(accum[0]) + '|' + accum[1] + '|' + accum[2] + '|' + accum[3])
     return merged
 
 

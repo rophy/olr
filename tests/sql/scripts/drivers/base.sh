@@ -390,7 +390,8 @@ SPOOL $(_oracle_spool_path)
 
 SELECT TO_CLOB(scn || '|' || operation || '|' || seg_owner || '|' || table_name || '|' || xid || '|') ||
        REPLACE(REPLACE(sql_redo, CHR(10), ' '), CHR(13), '') || '|' ||
-       REPLACE(REPLACE(NVL(sql_undo, ''), CHR(10), ' '), CHR(13), '')
+       REPLACE(REPLACE(NVL(sql_undo, ''), CHR(10), ' '), CHR(13), '') || '|' ||
+       row_id
 FROM v\$logmnr_contents
 WHERE seg_owner = UPPER('$SCHEMA_OWNER')
   AND operation IN ('INSERT', 'UPDATE', 'DELETE')

@@ -26,8 +26,12 @@ ARCHIVE_RETRY_ATTEMPTS=5
 ARCHIVE_MIN_THREADS=2
 FIXTURE_SUFFIX=""
 
+# Override generate.sh defaults — RAC has its own Oracle topology
+ORACLE_TARGET="rac"
+PDB_NAME="ORCLPDB"
+DB_CONN="olr_test/olr_test@//racnodep1:1521/ORCLPDB"
+
 # Source base driver (stage functions + primitive stubs)
-PDB_NAME="${PDB_NAME:-ORCLPDB}"
 
 source "$SCRIPT_DIR/drivers/base.sh"
 
@@ -35,7 +39,7 @@ source "$SCRIPT_DIR/drivers/base.sh"
 VM_HOST="${VM_HOST:-192.168.122.248}"
 VM_KEY="${VM_KEY:-$PROJECT_ROOT/oracle-rac/assets/vm-key}"
 VM_USER="${VM_USER:-root}"
-OLR_IMAGE="${OLR_IMAGE:-rophy/openlogreplicator:latest}"
+OLR_IMAGE="${OLR_IMAGE:-olr-dev:latest}"
 RAC_NODE1="${RAC_NODE1:-racnodep1}"
 RAC_NODE2="${RAC_NODE2:-racnodep2}"
 ORACLE_SID1="${ORACLE_SID1:-ORCLCDB1}"
