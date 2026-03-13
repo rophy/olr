@@ -26,6 +26,7 @@ build: ## Build OLR Docker image
 		-f Dockerfile.dev .
 
 tests/fixtures/%: tests/fixtures/%.tar.gz
+	rm -rf $@
 	tar xzf $< -C tests/fixtures/
 	touch $@
 
