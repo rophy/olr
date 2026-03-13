@@ -36,7 +36,15 @@ PROJECT_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 ORACLE_TARGET="${ORACLE_TARGET:-free-23}"
 ENV_DIR="$SQL_DIR/environments/$ORACLE_TARGET"
 
-# Defaults
+# Source environment .env file if present (provides DB_CONN, PDB_NAME, etc.)
+if [[ -f "$ENV_DIR/.env" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$ENV_DIR/.env"
+    set +a
+fi
+
+# Defaults (only applied if not set by .env or caller)
 DB_CONN="${DB_CONN:-olr_test/olr_test@//localhost:1521/FREEPDB1}"
 SCHEMA_OWNER="${SCHEMA_OWNER:-OLR_TEST}"
 PDB_NAME="${PDB_NAME:-FREEPDB1}"
