@@ -156,23 +156,12 @@ def _do_merge(prev, curr):
 
 
 def values_match(a, b):
-    """Compare two normalized values with type tolerance."""
+    """Compare two normalized values with strict equality."""
     if a is None and b is None:
         return True
     if a is None or b is None:
         return False
-    if a == b:
-        return True
-    # Numeric tolerance
-    try:
-        fa, fb = float(a), float(b)
-        if fa == fb:
-            return True
-        if fa != 0 and abs(fa - fb) / abs(fa) < 1e-6:
-            return True
-    except (ValueError, TypeError):
-        pass
-    return False
+    return a == b
 
 
 def columns_match(cols_a, cols_b):
