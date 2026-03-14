@@ -6,7 +6,7 @@ Usage: compare-debezium.py <logminer.jsonl> <olr.jsonl>
 Both inputs are JSONL files with Debezium envelope events:
   {"before":..., "after":..., "source":..., "op":..., "ts_ms":...}
 
-Compares the semantic content (op, table, before/after columns) while
+Compares records positionally (both sides emit in SCN order) while
 ignoring connector-specific metadata (source block, timestamps).
 
 Exits 0 on match, 1 on mismatch with diff report.
@@ -194,32 +194,8 @@ def columns_match(cols_a, cols_b):
     return diffs
 
 
-def match_score(a, b):
-    """Score how well two records match.
-    Returns (match_count, mismatch_count). (-1,0) if incompatible.
-    """
-    if a['op'] != b['op'] or a['table'] != b['table']:
-        return (-1, 0)
-
-    matches = 0
-    mismatches = 0
-    for section in ('after', 'before'):
-        ca = a.get(section, {})
-        cb = b.get(section, {})
-        common = set(ca.keys()) & set(cb.keys())
-        for key in common:
-            va, vb = ca.get(key), cb.get(key)
-            if is_unavailable(va) or is_unavailable(vb):
-                continue
-            if values_match(va, vb):
-                matches += 1
-            else:
-                mismatches += 1
-    return (matches, mismatches)
-
-
 def compare(lm_records, olr_records):
-    """Compare LogMiner vs OLR records using content-based matching."""
+    """Compare LogMiner vs OLR records positionally."""
     diffs = []
 
     if len(lm_records) != len(olr_records):
@@ -227,58 +203,25 @@ def compare(lm_records, olr_records):
             f"Record count mismatch: LogMiner={len(lm_records)}, OLR={len(olr_records)}"
         )
 
-    used_olr = set()
-    pairs = []
-
-    for i, lm in enumerate(lm_records):
-        best_j = None
-        best_matches = -1
-        best_mismatches = float('inf')
-
-        for j, olr in enumerate(olr_records):
-            if j in used_olr:
-                continue
-            m, mm = match_score(lm, olr)
-            if m < 0:
-                continue
-            if (mm < best_mismatches) or (mm == best_mismatches and m > best_matches):
-                best_j = j
-                best_matches = m
-                best_mismatches = mm
-
-        if best_j is not None:
-            used_olr.add(best_j)
-            pairs.append((i, best_j))
-        else:
+    for i, (lm, olr) in enumerate(zip(lm_records, olr_records)):
+        if lm['op'] != olr['op'] or lm['table'] != olr['table']:
             diffs.append(
-                f"LogMiner record #{i+1} ({lm['op']} {lm['table']}): "
-                f"no matching OLR record"
+                f"Record #{i+1}: op/table mismatch: "
+                f"LogMiner={lm['op']} {lm['table']}, "
+                f"OLR={olr['op']} {olr['table']}"
             )
-
-    for j in range(len(olr_records)):
-        if j not in used_olr:
-            olr = olr_records[j]
-            diffs.append(
-                f"OLR record #{j+1} ({olr['op']} {olr['table']}): "
-                f"no matching LogMiner record"
-            )
-
-    for lm_idx, olr_idx in pairs:
-        lm = lm_records[lm_idx]
-        olr = olr_records[olr_idx]
+            continue
 
         if lm['op'] in ('INSERT', 'UPDATE'):
             cd = columns_match(lm.get('after', {}), olr.get('after', {}))
             if cd:
-                diffs.append(f"Record (LM#{lm_idx+1}<>OLR#{olr_idx+1}) "
-                             f"({lm['op']}) 'after' diffs:")
+                diffs.append(f"Record #{i+1} ({lm['op']} {lm['table']}) 'after' diffs:")
                 diffs.extend(cd)
 
         if lm['op'] in ('UPDATE', 'DELETE'):
             cd = columns_match(lm.get('before', {}), olr.get('before', {}))
             if cd:
-                diffs.append(f"Record (LM#{lm_idx+1}<>OLR#{olr_idx+1}) "
-                             f"({lm['op']}) 'before' diffs:")
+                diffs.append(f"Record #{i+1} ({lm['op']} {lm['table']}) 'before' diffs:")
                 diffs.extend(cd)
 
     return diffs
