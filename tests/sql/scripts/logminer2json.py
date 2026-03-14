@@ -115,6 +115,22 @@ def parse_value_list(s):
                         i += 1
                         break
                 i += 1
+        elif s[i:i+15].upper() == 'TO_TIMESTAMP_TZ':
+            m = re.match(r"TO_TIMESTAMP_TZ\('([^']*)'", s[i:], re.IGNORECASE)
+            if m:
+                values.append(m.group(1))
+            else:
+                values.append(s[i:])
+            depth = 0
+            while i < len(s):
+                if s[i] == '(':
+                    depth += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
         elif s[i:i+12].upper() == 'TO_TIMESTAMP':
             m = re.match(r"TO_TIMESTAMP\('([^']*)'", s[i:], re.IGNORECASE)
             if m:
@@ -131,6 +147,41 @@ def parse_value_list(s):
                         i += 1
                         break
                 i += 1
+        elif s[i:i+14].upper() == 'TO_DSINTERVAL':
+            m = re.match(r"TO_DSINTERVAL\('([^']*)'", s[i:], re.IGNORECASE)
+            if m:
+                values.append(m.group(1))
+            else:
+                values.append(s[i:])
+            depth = 0
+            while i < len(s):
+                if s[i] == '(':
+                    depth += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
+        elif s[i:i+14].upper() == 'TO_YMINTERVAL':
+            m = re.match(r"TO_YMINTERVAL\('([^']*)'", s[i:], re.IGNORECASE)
+            if m:
+                values.append(m.group(1))
+            else:
+                values.append(s[i:])
+            depth = 0
+            while i < len(s):
+                if s[i] == '(':
+                    depth += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
+        elif s[i:i+11].upper() == 'EMPTY_CLOB(' or s[i:i+11].upper() == 'EMPTY_BLOB(':
+            values.append('')
+            i += 12  # skip EMPTY_CLOB() or EMPTY_BLOB()
         elif s[i:i+8].upper() == 'HEXTORAW':
             m = re.match(r"HEXTORAW\('([^']*)'\)", s[i:], re.IGNORECASE)
             if m:
@@ -205,7 +256,16 @@ def extract_value(val_str):
     m = re.match(r"TO_DATE\('([^']*)'", val_str, re.IGNORECASE)
     if m:
         return m.group(1)
+    m = re.match(r"TO_TIMESTAMP_TZ\('([^']*)'", val_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
     m = re.match(r"TO_TIMESTAMP\('([^']*)'", val_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.match(r"TO_DSINTERVAL\('([^']*)'", val_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.match(r"TO_YMINTERVAL\('([^']*)'", val_str, re.IGNORECASE)
     if m:
         return m.group(1)
     m = re.match(r"HEXTORAW\('([^']*)'\)", val_str, re.IGNORECASE)

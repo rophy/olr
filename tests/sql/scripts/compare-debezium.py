@@ -155,13 +155,25 @@ def _do_merge(prev, curr):
     }
 
 
+def normalize_tz(s):
+    """Normalize timezone representations: 'Z' and '+00:00' are equivalent."""
+    if isinstance(s, str):
+        # ISO8601: trailing 'Z' is equivalent to '+00:00'
+        if s.endswith('Z'):
+            return s[:-1] + '+00:00'
+    return s
+
+
 def values_match(a, b):
     """Compare two normalized values with strict equality."""
     if a is None and b is None:
         return True
     if a is None or b is None:
         return False
-    return a == b
+    if a == b:
+        return True
+    # Try timezone normalization
+    return normalize_tz(a) == normalize_tz(b)
 
 
 def columns_match(cols_a, cols_b):

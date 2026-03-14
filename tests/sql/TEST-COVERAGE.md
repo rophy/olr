@@ -1,10 +1,10 @@
 # Test Scenario Coverage Review
 
-Last reviewed: 2026-03-13
+Last reviewed: 2026-03-14
 
-## Current Coverage (39 scenarios)
+## Current Coverage (43 scenarios)
 
-### Single-Node (24 scenarios)
+### Single-Node (28 scenarios)
 
 | Scenario | Area | Key Coverage |
 |---|---|---|
@@ -12,6 +12,8 @@ Last reviewed: 2026-03-13
 | data-types | Types | VARCHAR2, CHAR, NVARCHAR2, NUMBER, BINARY_FLOAT/DOUBLE, DATE, TIMESTAMP, RAW, INTEGER |
 | number-precision | Types | NUMBER(38), sub-penny decimals, NaN, Infinity, zero, negative |
 | timestamp-variants | Types | DATE, TIMESTAMP(0/3/6/9), midnight/epoch/end-of-day edge cases |
+| timestamp-tz | Types | TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH LOCAL TIME ZONE, positive/negative/UTC offsets |
+| interval-types | Types | INTERVAL YEAR TO MONTH, INTERVAL DAY TO SECOND, positive/negative/zero/large |
 | lob-operations | Types | CLOB, BLOB — inline, out-of-row, NULL transitions |
 | large-lobs | Types | Out-of-row LOBs (8KB-32KB CLOBs, 2KB BLOBs), UPDATE large CLOB |
 | null-handling | Patterns | All-NULL inserts, NULL↔value transitions, NULL in before/after images |
@@ -30,7 +32,9 @@ Last reviewed: 2026-03-13
 | empty-string-null | Patterns | Oracle '' = NULL semantics, NULL↔value transitions, single space |
 | default-columns | Patterns | DEFAULT column values, INSERT with only PK, explicit NULL override |
 | identity-columns | Patterns | GENERATED ALWAYS / BY DEFAULT AS IDENTITY, auto/explicit IDs |
+| batch-dml | Patterns | INSERT ALL (multi-table), INSERT INTO..SELECT |
 | ddl-add-column | DDL | ALTER TABLE ADD COLUMN mid-stream |
+| ddl-operations | DDL | DROP COLUMN + ADD COLUMN in sequence |
 | multibyte-passthrough | Charset | Big5 Chinese in US7ASCII DB (@TAG us7ascii) |
 
 ### RAC (15 scenarios)
@@ -51,19 +55,16 @@ Last reviewed: 2026-03-13
 | rac-ddl-cross-node | DDL | DDL on node 1, DML on node 2 |
 | rac-multi-ddl | DDL | ALTER TABLE on multiple tables from different nodes |
 
-## Identified Gaps
+## Remaining Gaps
 
-### Priority 2 — Missing data types
-
-| Gap | Why it matters | Blocker |
+| Gap | Why | Status |
 |---|---|---|
-| TIMESTAMP WITH TIME ZONE | OLR has format options; untested | logminer2json.py needs TO_TIMESTAMP_TZ() |
-| INTERVAL DAY TO SECOND | OLR has format options for this | logminer2json.py needs TO_DSINTERVAL() |
-| INTERVAL YEAR TO MONTH | OLR has format options for this | logminer2json.py needs TO_YMINTERVAL() |
-| BOOLEAN (Oracle 23ai) | New type in 23ai | LogMiner doesn't support BOOLEAN in SQL_REDO |
+| UROWID | LogMiner outputs "Unsupported Type" — cannot validate ([#11](https://github.com/rophy/olr/issues/11)) | Skipped |
+| BOOLEAN (Oracle 23ai) | New type — LogMiner doesn't support BOOLEAN in SQL_REDO | Blocked |
+| JSON (native type) | Experimental in OLR (flag-gated) | Not priority |
+| XMLTYPE | Experimental in OLR (flag-gated) | Not priority |
 
-### Priority 3 — Edge cases
+## Notes
 
-| Gap | Why it matters | Status |
-|---|---|---|
-| Batch DML (INSERT ALL) | Different redo record format | TODO |
+- TSTZ, TSLTZ, INTERVAL types: fixture generation shows WARN (LogMiner vs OLR format differs) but Debezium twin-tests pass (Debezium normalizes formats)
+- DDL scenarios (@DDL marker) are skipped by Debezium twin-test by design

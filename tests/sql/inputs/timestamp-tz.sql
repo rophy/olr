@@ -1,0 +1,83 @@
+-- timestamp-tz.sql: Test TIMESTAMP WITH TIME ZONE and WITH LOCAL TIME ZONE.
+-- Verifies OLR correctly captures timezone-aware timestamps.
+
+SET SERVEROUTPUT ON
+SET FEEDBACK OFF
+SET ECHO OFF
+
+-- Setup: drop and recreate table
+DECLARE
+    v_table_exists NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO v_table_exists
+    FROM user_tables WHERE table_name = 'TEST_TIMESTAMP_TZ';
+    IF v_table_exists > 0 THEN
+        EXECUTE IMMEDIATE 'DROP TABLE TEST_TIMESTAMP_TZ PURGE';
+    END IF;
+END;
+/
+
+CREATE TABLE TEST_TIMESTAMP_TZ (
+    id          NUMBER PRIMARY KEY,
+    col_tstz    TIMESTAMP(6) WITH TIME ZONE,
+    col_tsltz   TIMESTAMP(6) WITH LOCAL TIME ZONE,
+    col_label   VARCHAR2(50)
+);
+
+ALTER TABLE TEST_TIMESTAMP_TZ ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Record start SCN
+DECLARE
+    v_start_scn NUMBER;
+BEGIN
+    SELECT current_scn INTO v_start_scn FROM v$database;
+    DBMS_OUTPUT.PUT_LINE('FIXTURE_SCN_START: ' || v_start_scn);
+END;
+/
+
+-- DML: INSERT with positive UTC offset
+INSERT INTO TEST_TIMESTAMP_TZ VALUES (1,
+    TO_TIMESTAMP_TZ('2025-06-15 10:30:00.123456 +05:30', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'),
+    TO_TIMESTAMP('2025-06-15 10:30:00.123456', 'YYYY-MM-DD HH24:MI:SS.FF'),
+    'positive-offset');
+COMMIT;
+
+-- DML: INSERT with negative UTC offset
+INSERT INTO TEST_TIMESTAMP_TZ VALUES (2,
+    TO_TIMESTAMP_TZ('2025-01-01 00:00:00.000000 -08:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'),
+    TO_TIMESTAMP('2025-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.FF'),
+    'negative-offset');
+COMMIT;
+
+-- DML: INSERT with UTC (zero offset)
+INSERT INTO TEST_TIMESTAMP_TZ VALUES (3,
+    TO_TIMESTAMP_TZ('2025-12-31 23:59:59.999999 +00:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'),
+    TO_TIMESTAMP('2025-12-31 23:59:59.999999', 'YYYY-MM-DD HH24:MI:SS.FF'),
+    'utc');
+COMMIT;
+
+-- DML: INSERT with NULL timestamps
+INSERT INTO TEST_TIMESTAMP_TZ VALUES (4, NULL, NULL, 'all-null');
+COMMIT;
+
+-- DML: UPDATE timezone value
+UPDATE TEST_TIMESTAMP_TZ SET
+    col_tstz = TO_TIMESTAMP_TZ('2026-03-14 12:00:00.000000 +09:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'),
+    col_label = 'updated-tz'
+WHERE id = 1;
+COMMIT;
+
+-- DML: DELETE
+DELETE FROM TEST_TIMESTAMP_TZ WHERE id = 2;
+COMMIT;
+
+-- Record end SCN
+DECLARE
+    v_end_scn NUMBER;
+BEGIN
+    SELECT current_scn INTO v_end_scn FROM v$database;
+    DBMS_OUTPUT.PUT_LINE('FIXTURE_SCN_END: ' || v_end_scn);
+END;
+/
+
+EXIT
