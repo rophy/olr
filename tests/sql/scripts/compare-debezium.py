@@ -15,7 +15,6 @@ Exits 0 on match, 1 on mismatch with diff report.
 import json
 import sys
 
-SENTINEL_TABLE = 'DEBEZIUM_SENTINEL'
 OP_MAP = {'c': 'INSERT', 'u': 'UPDATE', 'd': 'DELETE'}
 
 # Debezium's marker for LOB columns it can't provide.
@@ -60,9 +59,7 @@ def parse_debezium_jsonl(path):
             schema = source.get('schema', '')
             op = event.get('op', '')
 
-            # Skip sentinel and non-DML events
-            if table == SENTINEL_TABLE:
-                continue
+            # Skip non-DML events
             if op not in OP_MAP:
                 continue
 
