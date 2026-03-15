@@ -76,6 +76,7 @@ namespace OpenLogReplicator {
         log(ctx, "rlb1", redoLogRecord1);
         log(ctx, "rlb2", redoLogRecord2);
 
+        bool lobStripped = false;
         while (lastTc != nullptr && lastTc->size > 0 && opCodes > 0) {
             const auto sizeLast = *reinterpret_cast<typeChunkSize*>(lastTc->buffer + lastTc->size - sizeof(typeChunkSize));
             const auto* lastRedoLogRecord1 = reinterpret_cast<const RedoLogRecord*>(lastTc->buffer + lastTc->size - sizeLast +
@@ -91,6 +92,7 @@ namespace OpenLogReplicator {
                 case 0x1A02:
                     transactionBuffer->rollbackTransactionChunk(this);
                     --opCodes;
+                    lobStripped = true;
                     continue;
 
                 case 0x0B05:
@@ -136,6 +138,17 @@ namespace OpenLogReplicator {
                 ctx->warning(70003, "trying to rollback: " + std::to_string(lastRedoLogRecord2->opCode) + " with: " + std::to_string(redoLogRecord1->opCode) +
                              ", offset: " + redoLogRecord1->fileOffset.toString() + ", xid: " + xid.toString() + ", pos: 2");
                 return;
+            }
+
+            // In RAC online mode, Oracle generates phantom undo records for INSERTs on LOB tables.
+            // These appear as INSERT rollbacks with no preceding LOB index records on the stack.
+            // Legitimate rollbacks (out-of-line LOBs) always have LOB records stripped first.
+            if (!lobStripped && transactionBuffer->deferCommittedTransactions &&
+                    lastRedoLogRecord2->opCode == 0x0B02 && redoLogRecord1->opCode == 0x0B03) {
+                const DbTable* table = metadata->schema->checkTableDict(redoLogRecord1->obj);
+                if (table != nullptr && !table->lobs.empty()) {
+                    return;
+                }
             }
 
             transactionBuffer->rollbackTransactionChunk(this);
