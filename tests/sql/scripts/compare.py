@@ -234,6 +234,9 @@ def columns_match(lm_cols, olr_cols, op=None, section=None):
             # all columns on UPDATE, and LOB data too large for SQL_REDO is
             # absent from LogMiner output — skip in both cases
             continue
+        # LogMiner can't capture large LOB data — empty string means unfilled LOB
+        if lm_val == '' and olr_val and olr_val != '':
+            continue
         if not values_match(lm_val, olr_val):
             diffs.append(f"  column {key}: LogMiner={lm_val!r}, OLR={olr_val!r}")
     return diffs
