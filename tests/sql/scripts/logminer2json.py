@@ -16,6 +16,28 @@ import re
 import sys
 
 
+def decode_unistr(s):
+    """Decode Oracle UNISTR content: \\XXXX escape sequences to Unicode chars.
+
+    E.g., '\\65E5\\672C\\8A9E' → '日本語'
+    Non-escaped characters pass through as-is.
+    """
+    result = []
+    i = 0
+    while i < len(s):
+        if s[i] == '\\' and i + 4 < len(s):
+            hex_str = s[i+1:i+5]
+            try:
+                result.append(chr(int(hex_str, 16)))
+                i += 5
+                continue
+            except ValueError:
+                pass
+        result.append(s[i])
+        i += 1
+    return ''.join(result)
+
+
 def parse_insert(sql_redo):
     """Parse: insert into "OWNER"."TABLE"("COL1","COL2",...) values ('v1','v2',...)"""
     m = re.match(
@@ -179,6 +201,23 @@ def parse_value_list(s):
                         i += 1
                         break
                 i += 1
+        elif s[i:i+6].upper() == 'UNISTR':
+            # UNISTR('...') — decode \XXXX escape sequences to Unicode
+            m = re.match(r"UNISTR\('((?:[^']*(?:''[^']*)*)*)'\)", s[i:], re.IGNORECASE)
+            if m:
+                values.append(decode_unistr(m.group(1).replace("''", "'")))
+            else:
+                values.append(s[i:])
+            depth = 0
+            while i < len(s):
+                if s[i] == '(':
+                    depth += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
         elif s[i:i+11].upper() == 'EMPTY_CLOB(' or s[i:i+11].upper() == 'EMPTY_BLOB(':
             values.append('')
             i += 12  # skip EMPTY_CLOB() or EMPTY_BLOB()
@@ -271,6 +310,9 @@ def extract_value(val_str):
     m = re.match(r"HEXTORAW\('([^']*)'\)", val_str, re.IGNORECASE)
     if m:
         return m.group(1)
+    m = re.match(r"UNISTR\('((?:[^']*(?:''[^']*)*)*)'\)", val_str, re.IGNORECASE)
+    if m:
+        return decode_unistr(m.group(1).replace("''", "'"))
     return val_str
 
 
