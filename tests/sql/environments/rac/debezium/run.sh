@@ -217,11 +217,38 @@ if $IS_RAC_SQL; then
     _parse_rac_blocks "$SCENARIO_SQL" "$WORK_DIR"
     _run_rac_blocks "$WORK_DIR" setup
 else
+    # Extract only the DDL portion (up to and including the FIXTURE_SCN_START block).
+    # Running the full SQL would cause Stage 2 DML events to leak into the
+    # Stage 3 capture window when OLR hasn't finished processing them before
+    # the receiver reset.
     cat > "$WORK_DIR/ddl.sql" <<HEADER
 SET SERVEROUTPUT ON SIZE UNLIMITED
 SET FEEDBACK OFF
 HEADER
-    cat "$SCENARIO_SQL" >> "$WORK_DIR/ddl.sql"
+    python3 -c "
+import sys
+with open(sys.argv[1]) as f:
+    lines = f.readlines()
+# Find the / terminator after FIXTURE_SCN_START block
+scn_start = None
+for i, l in enumerate(lines):
+    if 'FIXTURE_SCN_START' in l and 'DBMS_OUTPUT' in l:
+        scn_start = i
+        break
+if scn_start is None:
+    # No SCN markers — include everything (e.g. simple DDL-only scripts)
+    for line in lines:
+        sys.stdout.write(line)
+else:
+    # Include everything up to and including the / after SCN_START block
+    end = scn_start
+    for i in range(scn_start, len(lines)):
+        if lines[i].strip() == '/':
+            end = i + 1
+            break
+    for line in lines[:end]:
+        sys.stdout.write(line)
+" "$SCENARIO_SQL" >> "$WORK_DIR/ddl.sql"
     echo "" >> "$WORK_DIR/ddl.sql"
     echo "EXIT" >> "$WORK_DIR/ddl.sql"
     _exec_user "$WORK_DIR/ddl.sql" > /dev/null 2>&1
