@@ -1,6 +1,6 @@
 # Test Scenario Coverage Review
 
-Last reviewed: 2026-03-14
+Last reviewed: 2026-03-15
 
 ## Current Coverage (43 scenarios)
 
@@ -55,16 +55,86 @@ Last reviewed: 2026-03-14
 | rac-ddl-cross-node | DDL | DDL on node 1, DML on node 2 |
 | rac-multi-ddl | DDL | ALTER TABLE on multiple tables from different nodes |
 
-## Remaining Gaps
+## Identified Gaps
+
+### Data Types Not Tested (supported by both OLR + LogMiner)
+
+| Gap | OLR Support | LogMiner Support | Priority | Proposed Scenario |
+|---|---|---|---|---|
+| NCHAR | Yes (parseString) | Yes | High | `nchar-nclob` |
+| NCLOB | Yes (parseLob) | Yes | High | `nchar-nclob` |
+| ROWID (as column type) | Yes | Yes | Medium | `rowid-column` |
+
+### DDL Operations Not Tested
+
+| Gap | Priority | Proposed Scenario |
+|---|---|---|
+| ALTER TABLE MODIFY COLUMN (type/size change) | High | `ddl-modify-rename` |
+| ALTER TABLE RENAME COLUMN | High | `ddl-modify-rename` |
+| TRUNCATE TABLE | High | `ddl-truncate` |
+
+### DML Patterns Not Tested
+
+| Gap | Why It Matters | Priority | Proposed Scenario |
+|---|---|---|---|
+| MERGE statement | Common DML, distinct redo pattern | High | `merge-statement` |
+| UPDATE with subquery | `UPDATE t SET x = (SELECT ...)` | Medium | `subquery-dml` |
+| INSERT with RETURNING | May generate different redo | Low | — |
+
+### Table/Column Features Not Tested
+
+| Gap | Why It Matters | Priority | Proposed Scenario |
+|---|---|---|---|
+| Virtual columns | GENERATED ALWAYS AS (expr) — not identity | High | `virtual-invisible-columns` |
+| Invisible columns | ALTER TABLE ... INVISIBLE | High | `virtual-invisible-columns` |
+| Index-Organized Table (IOT) | Different physical storage, different redo format | Medium | `iot-table` |
+| Compressed table (OLTP) | Compression changes redo format | Medium | `compressed-table` |
+| Chained rows | Rows spanning multiple blocks (>block size) | Low | — |
+
+### RAC Combination Gaps
+
+| Gap | Why It Matters | Priority | Proposed Scenario |
+|---|---|---|---|
+| RAC + partitioned table | DML to same partitioned table from both nodes | High | `rac-partitioned.rac.sql` |
+| RAC + no-PK table | ROWID-based identification across threads | High | `rac-no-pk.rac.sql` |
+| RAC + large LOB (>8KB) | Out-of-row LOB assembly across threads | Medium | `rac-large-lob.rac.sql` |
+| RAC + identity columns | Sequence-based identity from both nodes | Medium | `rac-identity.rac.sql` |
+| RAC + LOB spanning log switch | LOB cross-node + log file boundary | Medium | `rac-lob-log-switch.rac.sql` |
+
+### Blocked / Cannot Test
 
 | Gap | Why | Status |
 |---|---|---|
-| UROWID | LogMiner outputs "Unsupported Type" — cannot validate ([#11](https://github.com/rophy/olr/issues/11)) | Skipped |
-| BOOLEAN (Oracle 23ai) | New type — LogMiner doesn't support BOOLEAN in SQL_REDO | Blocked |
-| JSON (native type) | Experimental in OLR (flag-gated) | Not priority |
-| XMLTYPE | Experimental in OLR (flag-gated) | Not priority |
+| UROWID | LogMiner outputs "Unsupported Type" — cannot validate ([#11](https://github.com/rophy/olr/issues/11)) | Blocked (LogMiner) |
+| BOOLEAN (Oracle 23ai) | LogMiner doesn't support BOOLEAN in SQL_REDO | Blocked (LogMiner) |
+| JSON (native type) | Experimental in OLR (flag-gated) | Blocked (OLR) |
+| XMLTYPE | Experimental in OLR (flag-gated) | Blocked (OLR) |
+| LONG / LONG RAW | Legacy types — OLR type codes 8/24 not implemented | Not planned |
+| US7ASCII charset | OLR charset bug ([#2](https://github.com/rophy/olr/issues/2)) | Blocked (OLR) |
+
+## Implementation Priority
+
+**Phase 1 — High priority (common real-world patterns):**
+1. `nchar-nclob` — NCHAR, NVARCHAR2, NCLOB types
+2. `ddl-modify-rename` — ALTER TABLE MODIFY/RENAME COLUMN (@DDL)
+3. `merge-statement` — MERGE INTO ... USING ...
+4. `virtual-invisible-columns` — Virtual + invisible column handling
+5. `rac-partitioned.rac.sql` — Partitioned table DML from both nodes
+6. `rac-no-pk.rac.sql` — No-PK table across RAC nodes
+
+**Phase 2 — Medium priority (less common but important):**
+7. `ddl-truncate` — TRUNCATE TABLE (@DDL)
+8. `iot-table` — Index-Organized Table
+9. `compressed-table` — OLTP-compressed table
+10. `rac-large-lob.rac.sql` — Large out-of-row LOB from both nodes
+11. `rac-identity.rac.sql` — Identity columns across nodes
+12. `rowid-column` — ROWID as a column data type
+13. `subquery-dml` — UPDATE/DELETE with correlated subqueries
 
 ## Notes
 
 - TSTZ, TSLTZ, INTERVAL types: fixture generation shows WARN (LogMiner vs OLR format differs) but Debezium twin-tests pass (Debezium normalizes formats)
 - DDL scenarios (@DDL marker) are skipped by Debezium twin-test by design
+- LONG/LONG RAW are deprecated Oracle types (since 8i) — not worth implementing unless specific user demand
+- IOT and compressed table redo formats are significantly different from heap tables — may require OLR code changes, not just new test scenarios
+- Virtual columns are not stored in redo (computed on read) — OLR should exclude them; test validates this behavior
