@@ -73,6 +73,12 @@ Last reviewed: 2026-03-15
 | ALTER TABLE RENAME COLUMN | High | `ddl-modify-rename` |
 | TRUNCATE TABLE | High | `ddl-truncate` |
 
+> **Note:** DDL scenarios are validated in redo-log regression tests (LogMiner comparison)
+> but **not** in Debezium twin-test. The Debezium OLR adapter does not support mid-stream
+> schema evolution — it uses the initial snapshot schema and cannot handle ALTER TABLE
+> during streaming. The LogMiner adapter handles this via JDBC dictionary refresh, but
+> the OLR adapter lacks this feature. Tracked in [rophy/olr#13](https://github.com/rophy/olr/issues/13).
+
 ### DML Patterns Not Tested
 
 | Gap | Why It Matters | Priority | Proposed Scenario |
