@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-03-16
 
-## Current Coverage (55 scenarios)
+## Current Coverage (53 scenarios)
 
 ### Single-Node (36 scenarios)
 
@@ -45,7 +45,7 @@ Last reviewed: 2026-03-16
 | rowid-column | Types | ROWID as column type — INSERT, UPDATE, NULL transitions (OLR omits ROWID values, L8) |
 | multibyte-passthrough | Charset | Big5 Chinese in US7ASCII DB (@TAG us7ascii) |
 
-### RAC (19 scenarios)
+### RAC (17 scenarios)
 
 | Scenario | Area | Key Coverage |
 |---|---|---|

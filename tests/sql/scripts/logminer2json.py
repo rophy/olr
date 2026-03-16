@@ -206,18 +206,10 @@ def parse_value_list(s):
             m = re.match(r"UNISTR\('((?:[^']*(?:''[^']*)*)*)'\)", s[i:], re.IGNORECASE)
             if m:
                 values.append(decode_unistr(m.group(1).replace("''", "'")))
+                i += m.end()
             else:
                 values.append(s[i:])
-            depth = 0
-            while i < len(s):
-                if s[i] == '(':
-                    depth += 1
-                elif s[i] == ')':
-                    depth -= 1
-                    if depth == 0:
-                        i += 1
-                        break
-                i += 1
+                i = len(s)
         elif s[i:i+11].upper() == 'EMPTY_CLOB(' or s[i:i+11].upper() == 'EMPTY_BLOB(':
             values.append('')
             i += 12  # skip EMPTY_CLOB() or EMPTY_BLOB()
