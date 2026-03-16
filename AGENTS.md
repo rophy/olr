@@ -49,3 +49,20 @@ To generate fixtures, use `tests/sql/scripts/generate.sh` which runs SQL
 scenarios against Oracle, captures redo logs, validates OLR output against
 LogMiner, and saves golden files.
 See [`tests/README.md`](tests/README.md) for details.
+
+## Pull Requests
+
+**IMPORTANT:** After opening a PR, you MUST wait for CodeRabbit to review.
+Do NOT merge without PR review approvals. Do NOT ask the user to merge
+without approvals.
+
+## Known Limitations
+
+All known limitations of Oracle LogMiner, Debezium, and OLR that affect test
+behavior are documented in [`tests/KNOWN-LIMITATIONS.md`](tests/KNOWN-LIMITATIONS.md).
+
+**IMPORTANT:** Any claim that something is a "known limitation", "by design",
+or "cannot be done" MUST reference a specific entry (L1-L9) in that document.
+If no entry exists, investigate and add one with evidence before making the
+claim. Do NOT add entries without evidence from source code, documentation, or
+reproducible test results.
