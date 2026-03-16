@@ -614,7 +614,11 @@ namespace OpenLogReplicator {
                     const typeSlot rSlot = (static_cast<typeSlot>(data[8]) << 8) |
                             static_cast<typeSlot>(data[9]);
                     RowId rowId(rDataObj, rDba, rSlot);
-                    columnRowId(column->name, rowId);
+                    // Output as base64 string (Oracle's standard ROWID display format)
+                    // Not using columnRowId — that uses toHex for UROWID compatibility
+                    rowId.toString(reinterpret_cast<char*>(valueBuffer));
+                    valueSize = RowId::SIZE;
+                    columnString(column->name);
                 } else {
                     columnUnknown(column->name, data, size);
                 }
