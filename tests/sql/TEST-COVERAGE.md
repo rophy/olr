@@ -1,10 +1,10 @@
 # Test Scenario Coverage Review
 
-Last reviewed: 2026-03-15
+Last reviewed: 2026-03-16
 
-## Current Coverage (53 scenarios)
+## Current Coverage (55 scenarios)
 
-### Single-Node (34 scenarios)
+### Single-Node (36 scenarios)
 
 | Scenario | Area | Key Coverage |
 |---|---|---|
@@ -41,6 +41,8 @@ Last reviewed: 2026-03-15
 | ddl-operations | DDL | DROP COLUMN + ADD COLUMN in sequence |
 | ddl-modify-rename | DDL | ALTER TABLE MODIFY (widen), RENAME COLUMN mid-stream |
 | ddl-truncate | DDL | TRUNCATE TABLE — DML before/after truncate |
+| compressed-table | Patterns | OLTP-compressed table (ROW STORE COMPRESS ADVANCED) — INSERT, UPDATE, DELETE |
+| rowid-column | Types | ROWID as column type — INSERT, UPDATE, NULL transitions (OLR omits ROWID values, L8) |
 | multibyte-passthrough | Charset | Big5 Chinese in US7ASCII DB (@TAG us7ascii) |
 
 ### RAC (19 scenarios)
@@ -67,56 +69,38 @@ Last reviewed: 2026-03-15
 
 ## Remaining Gaps
 
-### Data Types
-
-| Gap | OLR Support | LogMiner Support | Priority | Proposed Scenario |
-|---|---|---|---|---|
-| ROWID (as column type) | Yes | Yes | Medium | `rowid-column` |
-
 ### Table/Column Features
 
-| Gap | Why It Matters | Priority | Proposed Scenario |
+| Gap | Why It Matters | Priority | Status |
 |---|---|---|---|
-| Invisible columns | No OLR support (no property flag in SysCol) | Blocked | — (needs OLR code changes) |
-| Index-Organized Table (IOT) | Different physical storage, different redo format | Medium | `iot-table` |
-| Compressed table (OLTP) | Compression changes redo format | Medium | `compressed-table` |
+| Invisible columns | No OLR support (no property flag in SysCol) | Blocked | L11 — needs OLR code changes |
 | Chained rows | Rows spanning multiple blocks (>block size) | Low | — |
-
-### RAC Combination Gaps
-
-| Gap | Why It Matters | Priority | Proposed Scenario |
-|---|---|---|---|
-| RAC + LOB spanning log switch | LOB cross-node + log file boundary | Medium | `rac-lob-log-switch.rac.sql` |
 
 ### Blocked / Cannot Test
 
-| Gap | Why | Status |
+All limitations reference entries in [`KNOWN-LIMITATIONS.md`](KNOWN-LIMITATIONS.md).
+
+| Gap | Why | Limitation |
 |---|---|---|
-| UROWID | LogMiner outputs "Unsupported Type" — cannot validate ([#11](https://github.com/rophy/olr/issues/11)) | Blocked (LogMiner) |
-| BOOLEAN (Oracle 23ai) | LogMiner doesn't support BOOLEAN in SQL_REDO | Blocked (LogMiner) |
-| JSON (native type) | Experimental in OLR (flag-gated) | Blocked (OLR) |
-| XMLTYPE | Experimental in OLR (flag-gated) | Blocked (OLR) |
-| LONG / LONG RAW | Legacy types — OLR type codes 8/24 not implemented | Not planned |
-| US7ASCII charset | OLR charset bug ([#2](https://github.com/rophy/olr/issues/2)) | Blocked (OLR) |
-| Invisible columns | No property flag in SysCol | Blocked (OLR) |
+| UROWID | LogMiner outputs "Unsupported Type" ([#11](https://github.com/rophy/olr/issues/11)) | L3 |
+| ROWID column | OLR omits ROWID column values from output | L8 |
+| BOOLEAN (Oracle 23ai) | LogMiner doesn't support BOOLEAN in SQL_REDO | L4 |
+| JSON (native type) | Experimental in OLR (flag-gated) | — |
+| XMLTYPE | Experimental in OLR (flag-gated) | — |
+| LONG / LONG RAW | Legacy types — OLR type codes 8/24 not implemented | — |
+| US7ASCII charset | OLR charset bug ([#2](https://github.com/rophy/olr/issues/2)) | L12 |
+| Invisible columns | No property flag in SysCol | L11 |
+| IOT | OLR doesn't discover IOTs in metadata | L9 |
+| RAC LOB + log switch | OLR crash ([#14](https://github.com/rophy/olr/issues/14)) | L10 |
 
 > **Note:** DDL scenarios (`@DDL` marker) are validated in redo-log regression tests (LogMiner comparison)
 > but **not** in Debezium twin-test. The Debezium OLR adapter does not support mid-stream
-> schema evolution — it uses the initial snapshot schema and cannot handle ALTER TABLE
-> during streaming. The LogMiner adapter handles this via JDBC dictionary refresh, but
-> the OLR adapter lacks this feature. Tracked in [rophy/olr#13](https://github.com/rophy/olr/issues/13).
-
-## Remaining Implementation Priority
-
-1. `iot-table` — Index-Organized Table (may need OLR code changes)
-2. `compressed-table` — OLTP-compressed table (may need OLR code changes)
-3. `rowid-column` — ROWID as a column data type
-4. `rac-lob-log-switch.rac.sql` — LOB + log switch across RAC nodes
+> schema evolution (L7). Tracked in [rophy/olr#13](https://github.com/rophy/olr/issues/13).
 
 ## Notes
 
 - TSTZ, TSLTZ, INTERVAL types: fixture generation shows WARN (LogMiner vs OLR format differs) but Debezium twin-tests pass (Debezium normalizes formats)
-- DDL scenarios (@DDL marker) are skipped by Debezium twin-test by design
+- DDL scenarios (@DDL marker) are skipped by Debezium twin-test by design (L7)
 - LONG/LONG RAW are deprecated Oracle types (since 8i) — not worth implementing unless specific user demand
-- IOT and compressed table redo formats are significantly different from heap tables — may require OLR code changes, not just new test scenarios
 - Virtual columns are not stored in redo (computed on read) — OLR correctly excludes them from output
+- OLTP-compressed tables work correctly — OLR handles compressed redo format
