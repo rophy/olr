@@ -32,6 +32,18 @@ ORACLE_DATE_FORMATS = [
     '%d-%b-%y %H.%M.%S', # DD-MON-RR HH.MI.SS (Oracle default with time)
 ]
 
+# TIMESTAMP WITH TIME ZONE from LogMiner: DD-MON-RR HH.MI.SS.FF AM/PM +HH:MM
+ORACLE_TSTZ_RE = re.compile(
+    r'^(\d{2})-([A-Z]{3})-(\d{2,4})\s+(\d{1,2})\.(\d{2})\.(\d{2})(?:\.(\d+))?\s*(AM|PM)\s+([+-]\d{2}:\d{2})$',
+    re.IGNORECASE
+)
+
+# INTERVAL YEAR TO MONTH from LogMiner: [+/-]YYYY-MM
+INTERVAL_YTM_RE = re.compile(r'^([+-])(\d+)-(\d+)$')
+
+# INTERVAL DAY TO SECOND from LogMiner: [+/-]D HH:MI:SS.FF
+INTERVAL_DTS_RE = re.compile(r'^([+-])(\d+)\s+(\d{2}):(\d{2}):(\d{2})\.(\d+)$')
+
 
 def normalize_value(v):
     """Normalize a value to string for comparison. None stays None."""
@@ -152,6 +164,92 @@ def try_parse_oracle_datetime(s):
     return None, None
 
 
+def try_match_tstz(lm_val, olr_val):
+    """Try matching TIMESTAMP WITH TIME ZONE values.
+
+    LogMiner: '15-JUN-25 10.30.00.123456 AM +05:30'
+    OLR:      '1749963600123456000,+05:30'  (epoch_nanos,tz_offset)
+    """
+    m_lm = ORACLE_TSTZ_RE.match(lm_val)
+    if not m_lm:
+        return None
+    # Check OLR format: nanos,offset
+    parts = olr_val.rsplit(',', 1)
+    if len(parts) != 2 or not parts[1].strip().startswith(('+', '-')):
+        return None
+
+    day, mon, year, hour, minute, sec, frac, ampm, lm_tz = m_lm.groups()
+    hour = int(hour)
+    if ampm.upper() == 'PM' and hour != 12:
+        hour += 12
+    elif ampm.upper() == 'AM' and hour == 12:
+        hour = 0
+
+    # Parse timezone offset to seconds
+    tz_sign = 1 if lm_tz[0] == '+' else -1
+    tz_h, tz_m = lm_tz[1:].split(':')
+    tz_offset_sec = tz_sign * (int(tz_h) * 3600 + int(tz_m) * 60)
+
+    try:
+        dt = datetime.strptime(f"{day}-{mon}-{year}", '%d-%b-%y')
+        dt = dt.replace(hour=hour, minute=int(minute), second=int(sec),
+                        tzinfo=timezone.utc)
+        # Convert to UTC by subtracting timezone offset
+        epoch_sec = int(dt.timestamp()) - tz_offset_sec
+        frac_nanos = int(frac.ljust(9, '0')[:9]) if frac else 0
+        lm_nanos = epoch_sec * 1_000_000_000 + frac_nanos
+    except ValueError:
+        return None
+
+    olr_nanos_str, olr_tz = parts[0].strip(), parts[1].strip()
+    try:
+        olr_nanos = int(olr_nanos_str)
+    except ValueError:
+        return None
+
+    return lm_nanos == olr_nanos and lm_tz.strip() == olr_tz
+
+
+def try_match_interval_ytm(lm_val, olr_val):
+    """Try matching INTERVAL YEAR TO MONTH values.
+
+    LogMiner: '+0005-03'  (years-months)
+    OLR:      '63'        (total months as integer)
+    """
+    m = INTERVAL_YTM_RE.match(lm_val)
+    if not m:
+        return None
+    sign_str, years, months = m.groups()
+    sign = -1 if sign_str == '-' else 1
+    lm_months = sign * (int(years) * 12 + int(months))
+    try:
+        olr_months = int(olr_val)
+    except ValueError:
+        return None
+    return lm_months == olr_months
+
+
+def try_match_interval_dts(lm_val, olr_val):
+    """Try matching INTERVAL DAY TO SECOND values.
+
+    LogMiner: '+0010 04:30:15.123456'  (days hours:min:sec.frac)
+    OLR:      '880215123456000'        (total nanoseconds as integer)
+    """
+    m = INTERVAL_DTS_RE.match(lm_val)
+    if not m:
+        return None
+    sign_str, days, hours, minutes, seconds, frac = m.groups()
+    sign = -1 if sign_str == '-' else 1
+    total_sec = ((int(days) * 24 + int(hours)) * 60 + int(minutes)) * 60 + int(seconds)
+    frac_nanos = int(frac.ljust(9, '0')[:9])
+    lm_nanos = sign * (total_sec * 1_000_000_000 + frac_nanos)
+    try:
+        olr_nanos = int(olr_val)
+    except ValueError:
+        return None
+    return lm_nanos == olr_nanos
+
+
 def values_match(lm_val, olr_val):
     """Compare two normalized values with type awareness."""
     if lm_val is None and olr_val is None:
@@ -161,6 +259,18 @@ def values_match(lm_val, olr_val):
     # Direct string match
     if lm_val == olr_val:
         return True
+    # Try TIMESTAMP WITH TIME ZONE
+    result = try_match_tstz(lm_val, olr_val)
+    if result is not None:
+        return result
+    # Try INTERVAL YEAR TO MONTH
+    result = try_match_interval_ytm(lm_val, olr_val)
+    if result is not None:
+        return result
+    # Try INTERVAL DAY TO SECOND
+    result = try_match_interval_dts(lm_val, olr_val)
+    if result is not None:
+        return result
     # Try numeric comparison with tolerance for float precision differences
     # (e.g., BINARY_FLOAT: LogMiner='3.1400001E+000', OLR='3.14')
     try:
