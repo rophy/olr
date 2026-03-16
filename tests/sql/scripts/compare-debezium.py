@@ -123,15 +123,6 @@ def _same_row(a_after, b_after):
     return matching > 0
 
 
-def _value_priority(v):
-    """Rank value informativeness: real > unavailable > None."""
-    if v is not None and not is_unavailable(v):
-        return 2
-    if is_unavailable(v):
-        return 1
-    return 0
-
-
 def _merge_columns(prev_cols, curr_cols):
     """Merge column dicts. The later event (curr) always wins because it
     represents the final state of the LOB split — even if curr's value is
