@@ -1,3 +1,4 @@
+-- @TAG iot
 -- iot-table.sql: Test Index-Organized Table (IOT).
 -- Run as PDB user (e.g., olr_test/olr_test@//localhost:1521/FREEPDB1)
 --
