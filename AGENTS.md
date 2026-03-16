@@ -1,5 +1,9 @@
 # OpenLogReplicator
 
+This is a fork of [bersler/OpenLogReplicator](https://github.com/bersler/OpenLogReplicator).
+All source code changes over upstream are tracked in [`UPSTREAM-CHANGES.md`](UPSTREAM-CHANGES.md).
+When making source changes, update that document. Avoid unnecessary divergence from upstream.
+
 ## Build
 
 Prerequisites: Docker with BuildKit, docker compose.
