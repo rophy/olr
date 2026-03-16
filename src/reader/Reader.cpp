@@ -752,7 +752,8 @@ namespace OpenLogReplicator {
                 {
                     contextSet(CONTEXT::MUTEX, REASON::READER_SLEEP2);
                     std::unique_lock const lck(mtx);
-                    status = STATUS::SLEEPING;
+                    if (status == STATUS::READ)
+                        status = STATUS::SLEEPING;
                     condParserSleeping.notify_all();
                 }
                 contextSet(CONTEXT::CPU);
