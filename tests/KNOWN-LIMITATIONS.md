@@ -230,25 +230,24 @@ no output for the scenario.
 
 ---
 
-## L10. OLR Crash on RAC LOB + Log Switch
+## L10. ~~OLR Crash on RAC LOB + Log Switch~~ (FIXED)
 
-OLR crashes with a null pointer dereference in `Reader.cpp:111` when
-processing heavy LOB operations spanning multiple log switches on RAC.
+**Root cause:** `Ctx::getMemoryChunk()` returned `nullptr` during
+`hardShutdown` (OOM condition), but 7 of 9 callers never checked for null.
+Under tight memory + heavy LOB redo, the parser consumed all available chunks,
+the reader's allocation failed silently, and the subsequent dereference
+crashed.
 
-**Evidence — test output (2026-03-16):**
+**Fix:** Changed `getMemoryChunk()` to throw `RuntimeException(10018)` instead
+of returning `nullptr` on hard shutdown. This is consistent with the existing
+throw at line 489-490 (post-allocation shutdown check). Removed the one
+now-unreachable null check in `MemoryManager::unswap()`.
 
-```
-Reader.cpp:111:21: runtime error: load of null pointer of type 'uint8_t'
-```
-
-Occurs when advancing to a new archive log sequence on thread 2 during
-`rac-lob-log-switch` scenario (40 LOB inserts + 10 updates + 10 deletes
-across both nodes).
+**Validated:** Reproduced 10/10 on RAC VM with 32-64MB memory + LOB DML from
+both nodes. After fix, OLR shuts down gracefully with error 10018 instead of
+crashing.
 
 **Tracked:** [rophy/olr#14](https://github.com/rophy/olr/issues/14)
-
-**Test handling:** `rac-lob-log-switch` scenario cannot be used until bug is
-fixed.
 
 ---
 
@@ -305,6 +304,6 @@ applies at DB creation, not pre-built).
 |----|------------|-------|---------------|
 | L8 | ROWID column (type# 69) not decoded | [#15](https://github.com/rophy/olr/issues/15) | `rowid-column` |
 | L9 | IOT not discovered in metadata | [#16](https://github.com/rophy/olr/issues/16) | `iot-table` |
-| L10 | RAC LOB + log switch null pointer crash | [#14](https://github.com/rophy/olr/issues/14) | `rac-lob-log-switch` |
+| ~~L10~~ | ~~RAC LOB + log switch null pointer crash~~ (FIXED) | [#14](https://github.com/rophy/olr/issues/14) | — |
 | L11 | Invisible columns not tracked | — | — |
 | L12 | US7ASCII charset corruption | [#2](https://github.com/rophy/olr/issues/2) | `multibyte-passthrough` (@TAG) |

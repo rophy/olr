@@ -37,6 +37,7 @@ Multi-thread redo log processing for Oracle RAC.
 | 1a2d316b | LOB INSERT preserved from phantom undo in streaming | Transaction.cpp | [#10](https://github.com/rophy/olr/issues/10) |
 | ddf6bc04 | skip truncated URP null bitmap instead of abort | OpCode0504.cpp | — |
 | 7cbd0580 | decode ROWID column type (type# 69) | Builder.cpp, SysCol.h, BuilderJson.* | [#15](https://github.com/rophy/olr/issues/15) |
+| — | OOM null-deref crash: throw instead of returning nullptr | Ctx.cpp, MemoryManager.cpp | [#14](https://github.com/rophy/olr/issues/14) |
 
 **Upstream PR candidates:** All — these are correctness fixes
 

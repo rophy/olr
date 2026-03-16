@@ -91,7 +91,7 @@ All limitations reference entries in [`KNOWN-LIMITATIONS.md`](KNOWN-LIMITATIONS.
 | US7ASCII charset | OLR charset bug ([#2](https://github.com/rophy/olr/issues/2)) | L12 |
 | Invisible columns | No property flag in SysCol | L11 |
 | IOT | OLR doesn't discover IOTs in metadata | L9 |
-| RAC LOB + log switch | OLR crash ([#14](https://github.com/rophy/olr/issues/14)) | L10 |
+| ~~RAC LOB + log switch~~ | ~~OLR crash~~ (FIXED — [#14](https://github.com/rophy/olr/issues/14)) | ~~L10~~ |
 
 > **Note:** DDL scenarios (`@DDL` marker) are validated in redo-log regression tests (LogMiner comparison)
 > but **not** in Debezium twin-test. The Debezium OLR adapter does not support mid-stream

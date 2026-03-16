@@ -459,7 +459,7 @@ namespace OpenLogReplicator {
                     outOfMemoryParser = true;
 
                 if (hardShutdown)
-                    return nullptr;
+                    throw RuntimeException(10018, "shutdown during memory allocation for: " + memoryModules[static_cast<uint>(module)]);
 
                 info(0, "OOM: waiting for memory module=" + memoryModules[static_cast<uint>(module)] +
                      " free=" + std::to_string(memoryChunksFree) + " alloc=" + std::to_string(memoryChunksAllocated) +
