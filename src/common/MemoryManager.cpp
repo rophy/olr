@@ -239,8 +239,6 @@ namespace OpenLogReplicator {
 
     bool MemoryManager::unswap(Xid xid, int64_t index) {
         uint8_t* tc = ctx->getMemoryChunk(this, Ctx::MEMORY::TRANSACTIONS, true);
-        if (tc == nullptr)
-            return false;
 
         const std::string fileName = swapPath + "/" + xid.toString() + ".swap";
         struct stat fileStat{};
