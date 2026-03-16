@@ -601,6 +601,7 @@ namespace OpenLogReplicator {
             case SysCol::COLTYPE::ROWID:
                 // ROWID (type 69) in redo: 10 bytes big-endian
                 //   dataObj(4) + DBA(4, afn<<22|block) + slot(2)
+                // Output as Oracle base64 ROWID string (e.g. AAASnuAAMAAAAKtAAA)
                 if (size == 10) {
                     const typeDataObj rDataObj = (static_cast<typeDataObj>(data[0]) << 24) |
                             (static_cast<typeDataObj>(data[1]) << 16) |
