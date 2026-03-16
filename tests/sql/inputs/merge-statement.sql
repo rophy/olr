@@ -81,9 +81,10 @@ WHEN NOT MATCHED THEN
     INSERT (id, name, val, status) VALUES (s.id, s.name, s.val, s.status);
 COMMIT;
 
--- Prepare source for DELETE merge
--- id=3: exists in target, not in new source → DELETE
--- id=1: exists in both → UPDATE
+-- Prepare source for MERGE with DELETE clause
+-- Only id=1 in source → only id=1 matches ON (t.id = s.id)
+-- id=1: matched → UPDATE to 'final', then DELETE WHERE status = 'final'
+-- id=3: not matched (not in source) → untouched
 DELETE FROM TEST_MERGE_SOURCE;
 INSERT INTO TEST_MERGE_SOURCE VALUES (1, 'Alice-Final', 175, 'final');
 COMMIT;
