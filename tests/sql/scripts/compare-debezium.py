@@ -133,11 +133,12 @@ def _value_priority(v):
 
 
 def _merge_columns(prev_cols, curr_cols):
-    """Merge column dicts, preferring the most informative value."""
+    """Merge column dicts. The later event (curr) always wins because it
+    represents the final state of the LOB split — even if curr's value is
+    None (LOB set to NULL), it overrides prev's unavailable marker."""
     merged = dict(prev_cols)
     for k, v in curr_cols.items():
-        if k not in merged or _value_priority(v) >= _value_priority(merged[k]):
-            merged[k] = v
+        merged[k] = v
     return merged
 
 
@@ -173,8 +174,14 @@ def values_match(a, b):
     return normalize_tz(a) == normalize_tz(b)
 
 
-def columns_match(cols_a, cols_b):
-    """Compare two column dicts. Returns list of diff strings."""
+def columns_match(cols_a, cols_b, section='after'):
+    """Compare two column dicts. Returns list of diff strings.
+
+    section: 'before' or 'after'. LOB unavailable values are only skipped
+    in 'before' images — Oracle LogMiner does not provide old LOB values
+    in SQL_UNDO (see KNOWN-LIMITATIONS.md L1). In 'after' images, unavailable
+    values indicate a real problem (e.g. lob.enabled=false).
+    """
     diffs = []
     all_keys = set(cols_a.keys()) | set(cols_b.keys())
     for key in sorted(all_keys):
@@ -183,8 +190,9 @@ def columns_match(cols_a, cols_b):
         if key not in cols_b or key not in cols_a:
             # One side has extra columns — skip (supplemental logging diffs)
             continue
-        if is_unavailable(va) or is_unavailable(vb):
-            # LOB column where one side can't provide the value — skip
+        if section == 'before' and (is_unavailable(va) or is_unavailable(vb)):
+            # LOB before-image unavailable — Oracle doesn't provide old LOB
+            # values in redo (L1 in KNOWN-LIMITATIONS.md)
             continue
         if not values_match(va, vb):
             diffs.append(f"  column {key}: LogMiner={va!r}, OLR={vb!r}")
@@ -210,13 +218,13 @@ def compare(lm_records, olr_records):
             continue
 
         if lm['op'] in ('INSERT', 'UPDATE'):
-            cd = columns_match(lm.get('after', {}), olr.get('after', {}))
+            cd = columns_match(lm.get('after', {}), olr.get('after', {}), section='after')
             if cd:
                 diffs.append(f"Record #{i+1} ({lm['op']} {lm['table']}) 'after' diffs:")
                 diffs.extend(cd)
 
         if lm['op'] in ('UPDATE', 'DELETE'):
-            cd = columns_match(lm.get('before', {}), olr.get('before', {}))
+            cd = columns_match(lm.get('before', {}), olr.get('before', {}), section='before')
             if cd:
                 diffs.append(f"Record #{i+1} ({lm['op']} {lm['table']}) 'before' diffs:")
                 diffs.extend(cd)
