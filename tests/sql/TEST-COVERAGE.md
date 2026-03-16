@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-03-16
 
-## Current Coverage (55 scenarios)
+## Current Coverage (53 scenarios)
 
 ### Single-Node (36 scenarios)
 
