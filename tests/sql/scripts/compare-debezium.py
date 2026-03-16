@@ -186,9 +186,6 @@ def columns_match(cols_a, cols_b):
         if is_unavailable(va) or is_unavailable(vb):
             # LOB column where one side can't provide the value — skip
             continue
-        if va is None and vb is not None:
-            # LogMiner couldn't capture large LOB data — skip
-            continue
         if not values_match(va, vb):
             diffs.append(f"  column {key}: LogMiner={va!r}, OLR={vb!r}")
     return diffs
