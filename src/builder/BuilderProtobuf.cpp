@@ -74,7 +74,7 @@ namespace OpenLogReplicator {
 
     void BuilderProtobuf::columnRowId(const std::string& columnName, RowId rowId) {
         char str[RowId::SIZE + 1];
-        rowId.toString(str);
+        rowId.toHex(str);
         valuePB->set_name(columnName);
         valuePB->set_value_string(str, 18);
     }

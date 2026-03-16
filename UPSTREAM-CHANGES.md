@@ -53,12 +53,13 @@ downstream consumers and should be carefully considered for upstream PRs.
 | 3f7b9d89 | float/double format | `3` (no decimal) | `3.0` (always decimal) | Medium — format change |
 | 521ad7db | NaN/Inf (type=0) | `NaN` (invalid JSON) | `null` | Low — fixes invalid JSON |
 | 7cbd0580 | ROWID output | Not supported | Base64 (`AAASnuAAMAAAAKtAAA`) | None — new type |
-| 7cbd0580 | UROWID output | Hex (`030002ad.29ee.0000`) | Base64 (`AAASnuAAMAAAAKtAAA`) | Low — UROWID is rare |
+| — | UROWID output | Hex (`030002ad.29ee.0000`) | **Unchanged** | None |
 
-**Note:** UROWID output format changed from `toHex()` to `toString()` (base64)
-for consistency with ROWID. Upstream used hex because LogMiner can't validate
-UROWID (outputs "Unsupported Type"), so the format was arbitrary. Base64 is
-Oracle's standard ROWID representation.
+**Note:** ROWID (type 69, always physical) uses base64 — Oracle's standard
+display format for physical row addresses. UROWID (type 208) keeps upstream's
+hex format because UROWID can store logical ROWIDs (from IOTs) which have
+variable length and are not the same 10-byte structure — base64 encoding
+would be incorrect for those.
 
 ---
 
