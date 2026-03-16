@@ -1601,7 +1601,9 @@ namespace OpenLogReplicator {
         if (!replicatorOnline->checkConnection())
             return;
 
-        // Find minimum sequence across all threads for the SQL filter
+        // Use minimum sequence across all threads for the SQL filter so the
+        // query finds archives for the lagging thread.  Per-thread filtering
+        // below prevents creating Parsers for already-processed archives.
         Seq minSeq = Seq::none();
         {
             std::unique_lock const lck(replicator->metadata->mtxCheckpoint);
@@ -1610,7 +1612,6 @@ namespace OpenLogReplicator {
                     minSeq = state.sequence;
             }
         }
-        // Fallback to legacy sequence if threadStates is empty
         if (minSeq == Seq::none())
             minSeq = replicator->metadata->sequence;
 
@@ -1639,6 +1640,16 @@ namespace OpenLogReplicator {
 
             int ret = stmt.executeQuery();
             while (ret != 0) {
+                const auto threadNum = static_cast<uint16_t>(thread);
+
+                // Filter per-thread: skip archives already processed by this thread.
+                // Matches archGetLogPath()/archGetLogList() logic (Replicator.cpp:531-533).
+                const Seq threadSeq = replicator->metadata->getSequence(threadNum);
+                if (threadSeq != Seq::none() && sequence < threadSeq) {
+                    ret = stmt.next();
+                    continue;
+                }
+
                 std::string mappedPath(path.data());
                 replicator->applyMapping(mappedPath);
 
@@ -1647,8 +1658,8 @@ namespace OpenLogReplicator {
                 parser->firstScn = firstScn;
                 parser->nextScn = nextScn;
                 parser->sequence = sequence;
-                parser->thread = static_cast<uint16_t>(thread);
-                replicator->archiveRedoQueues[static_cast<uint16_t>(thread)].push(parser);
+                parser->thread = threadNum;
+                replicator->archiveRedoQueues[threadNum].push(parser);
                 ret = stmt.next();
             }
         }
