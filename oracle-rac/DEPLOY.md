@@ -308,6 +308,7 @@ podman create -t -i \
   --device=/dev/asm-disk1:/dev/asm-disk1 \
   --device=/dev/asm-disk2:/dev/asm-disk2 \
   -e CRS_ASM_DEVICE_LIST=/dev/asm-disk1,/dev/asm-disk2 \
+  -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 \
   -e OP_TYPE=setuprac \
   --restart=always --ulimit rtprio=99 --systemd=always \
   --name racnodep1 \
@@ -349,6 +350,7 @@ podman create -t -i \
   --device=/dev/asm-disk1:/dev/asm-disk1 \
   --device=/dev/asm-disk2:/dev/asm-disk2 \
   -e CRS_ASM_DEVICE_LIST=/dev/asm-disk1,/dev/asm-disk2 \
+  -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 \
   -e OP_TYPE=setuprac \
   --restart=always --ulimit rtprio=99 --systemd=always \
   --name racnodep2 \
