@@ -1,0 +1,32 @@
+# Dockerfile.valgrind — Build without sanitizers, with valgrind for heap profiling
+# Usage: docker build -f Dockerfile.valgrind -t olr-valgrind:latest .
+
+FROM olr-dev:latest AS base
+
+USER root
+
+# Install valgrind
+RUN apt-get update && apt-get -y install valgrind && rm -rf /var/lib/apt/lists/*
+
+# Rebuild OLR without sanitizers (RelWithDebInfo = optimized + debug symbols)
+RUN --mount=type=cache,target=/root/.ccache,id=olr-ccache \
+    set -eu && \
+    export CCACHE_DIR=/root/.ccache && \
+    cd /opt/OpenLogReplicator-local && \
+    rm -rf cmake-build-valgrind && \
+    mkdir cmake-build-valgrind && \
+    cd cmake-build-valgrind && \
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -DCTXASSERT=1" \
+        -DWITH_RAPIDJSON=/opt/rapidjson \
+        -DWITH_RDKAFKA=/opt/librdkafka \
+        -DWITH_PROMETHEUS=/opt/prometheus \
+        -DWITH_OCI=/opt/instantclient_23_26 \
+        -DWITH_PROTOBUF=/opt/protobuf \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -S ../ -B ./ && \
+    cmake --build ./ --target OpenLogReplicator -j && \
+    cp ./OpenLogReplicator /opt/OpenLogReplicator/OpenLogReplicator
+
+USER user1:oracle
